@@ -610,7 +610,14 @@
     },
   };
 
-  const getState = (m, l) => m._tokenization._tokenizationStateStore._beginState[l];
+  const getState = (m, l) => {
+    try {
+      return m._tokenization?._tokenizationStateStore?._beginState?.[l];
+    } catch (e) {
+      // Model might not be fully initialized yet
+      return null;
+    }
+  };
   const aplCompletions = (pk) => ({
     triggerCharacters: `1234567890:.⎕()[]${pk}`.split(''),
     provideCompletionItems: (model, position) => {

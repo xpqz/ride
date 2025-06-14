@@ -1,7 +1,10 @@
 const Console = console;
+console.log('RIDE: init.js file loaded');
 
 {
+  console.log('RIDE: init.js block executing');
   const init = () => {
+    console.log('RIDE: init() called');
     I.apl_font.hidden = true;
 
     if (D.el) {
@@ -112,16 +115,32 @@ const Console = console;
       if (qp.type === 'prf') {
         D.ipc.config.appspace = qp.appid;
         document.body.className += ' floating-window';
-        D.IPC_Prf();
+        if (D.ENABLE_FLOATING_MODE) {
+          D.IPC_Prf();
+        } else {
+          console.log('RIDE: Preference window in non-floating mode - skipping IPC');
+        }
         I.splash.hidden = 1;
       } else if (qp.type === 'editor') {
-        D.ipc.config.appspace = qp.appid;
-        document.body.className += ' floating-window';
-        D.IPC_Client(+qp.winId);
-        I.splash.hidden = 1;
+        // Only start IPC client for floating windows if feature flag is enabled
+        if (D.ENABLE_FLOATING_MODE) {
+          D.ipc.config.appspace = qp.appid;
+          document.body.className += ' floating-window';
+          D.IPC_Client(+qp.winId);
+          I.splash.hidden = 1;
+        } else {
+          // If floating mode is disabled, close this window
+          window.close();
+        }
       } else {
-        const winsLoaded = D.IPC_Server();
-        const appid = D.ipc.config.appspace;
+        // Main window startup
+        const appid = `ride_${+new Date()}`;
+        
+        // Always create auxiliary windows for compatibility
+        // These are needed for preferences dialog, task dialogs, and status window
+        console.log('RIDE: Creating auxiliary windows');
+        
+        // Create preference window
         let bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -140,6 +159,8 @@ const Console = console;
         D.elm.enable(bw.webContents);
         bw.loadURL(`${loc}?type=prf&appid=${appid}`);
         D.prf_bw = { id: bw.id };
+        
+        // Create dialog window
         bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -162,6 +183,8 @@ const Console = console;
         D.elm.enable(bw.webContents);
         bw.loadURL(`file://${__dirname}/dialog.html?appid=${appid}`);
         D.dlg_bw = { id: bw.id };
+        
+        // Create status window
         bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -183,11 +206,42 @@ const Console = console;
         D.elm.enable(bw.webContents);
         bw.loadURL(`file://${__dirname}/status.html?appid=${appid}`);
         D.stw_bw = { id: bw.id };
+        
         D.elw.focus();
-        Promise.all(winsLoaded).then(() => {
-          I.splash.hidden = 1;
-          nodeRequire(`${__dirname}/src/cn`)();
-        });
+        
+        if (D.ENABLE_FLOATING_MODE) {
+          // Start IPC server and wait for windows to signal ready
+          console.log('RIDE: Starting IPC server for floating mode');
+          const winsLoaded = D.IPC_Server();
+          Promise.all(winsLoaded).then(() => {
+            I.splash.hidden = 1;
+            nodeRequire(`${__dirname}/src/cn`)();
+            if (D.cn) D.cn();
+          });
+        } else {
+          // Skip IPC but still load connection dialog
+          console.log('RIDE: Floating mode disabled, loading connection dialog directly');
+          // Open developer tools to see errors
+          if (D.elw && D.elw.webContents) {
+            D.elw.webContents.openDevTools();
+          }
+          // Give windows a moment to initialize
+          setTimeout(() => {
+            console.log('RIDE: Hiding splash screen');
+            I.splash.hidden = 1;
+            console.log('RIDE: Loading connection dialog');
+            try {
+              nodeRequire(`${__dirname}/src/cn`)();
+              if (D.cn) {
+                console.log('RIDE: Showing connection dialog');
+                D.cn();
+              }
+            } catch (e) {
+              console.error('RIDE: Failed to load connection dialog:', e);
+              alert('Failed to load connection dialog: ' + e.message);
+            }
+          }, 100);
+        }
       }
     } else {
       const ws = new WebSocket((loc.protocol === 'https:' ? 'wss://' : 'ws://') + loc.host);
@@ -233,7 +287,7 @@ const Console = console;
         return;
       }
       try {
-        D.ipc && D.ipc.server.stop();
+        D.ipc && D.ipc.server && D.ipc.server.stop();
         D.ide && D.prf.connectOnQuit() && D.commands.CNC();
         if (D.ide && !D.ide.connected && D.el) D.wins[0].histWrite();
       } finally {
@@ -327,5 +381,14 @@ const Console = console;
     }
   };
 
-  D.mop.then(() => init());
+  // Wait for Monaco editor to load before initializing
+  D.mop.then(() => {
+    console.log('RIDE: Monaco loaded, calling init()');
+    init();
+  }).catch(e => {
+    console.error('RIDE: Monaco failed to load:', e);
+    // For now, still proceed without Monaco to keep the app functional
+    console.warn('RIDE: Proceeding without Monaco Editor');
+    init();
+  });
 }

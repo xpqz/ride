@@ -1,4 +1,5 @@
 // early set up of environment properties
+console.log('RIDE: pre_init.js loading');
 var D = typeof D === "undefined" ? {} : D;
 
 D.commands = {};
@@ -13,6 +14,7 @@ const I = {};
 const J = {};
 
 (function preInit() {
+  console.log('RIDE: preInit() function executing');
   toastr.options.timeOut = 5000;
   toastr.options.preventDuplicates = true;
   // build up I by iterating over all elements with IDs
@@ -29,7 +31,20 @@ const J = {};
     }
   }
   D.mop = new Promise((resolve, reject) => {
-    amdRequire(['vs/editor/editor.main'], resolve, reject);
+    // Ensure amdRequire is available and properly configured
+    if (typeof amdRequire === 'undefined') {
+      reject(new Error('AMD loader not found. Monaco Editor loader may not be properly initialized.'));
+      return;
+    }
+    
+    // Load Monaco Editor
+    amdRequire(['vs/editor/editor.main'], () => {
+      console.log('Monaco Editor loaded successfully');
+      resolve();
+    }, (err) => {
+      console.error('Failed to load Monaco Editor:', err);
+      reject(err);
+    });
   });
   D.zoom2fs = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
     16, 17, 18, 19, 20, 22, 24, 26, 28, 32, 36, 42, 48];

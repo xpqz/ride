@@ -72,7 +72,7 @@
     UND(me) { me.trigger('D', 'undo'); },
     PRF() { D.prf_ui(); },
     ABT() {
-      if (D.el && D.ide && D.ide.floating) D.ipc.of.ride_master.emit('ABT');
+      if (D.el && D.ide && D.ENABLE_FLOATING_MODE && D.ide.floating) D.ipc.of.ride_master.emit('ABT');
       else D.abt();
     },
     CAM() {
@@ -124,7 +124,7 @@
       openURI(D.hlp.THIRDPARTY);
     },
     OWS() {
-      if (D.el && D.ide.floating) {
+      if (D.el && D.ENABLE_FLOATING_MODE && D.ide.floating) {
         D.ipc.of.ride_master.emit('OWS');
         return;
       }
@@ -150,7 +150,7 @@
     },
     NEW() {
       if (!D.el) return;
-      if (D.ide.floating) {
+      if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
         D.ipc.of.ride_master.emit('NEW');
         return;
       }
@@ -245,7 +245,7 @@
     },
     LOG() {
       if (!D.el) return;
-      if (D.ide.floating) {
+      if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
         D.ipc.of.ride_master.emit('LOG');
         return;
       }
@@ -444,10 +444,26 @@
     });
   };
   D.remDefaultMap = (me) => {
-    const kbs = me._standaloneKeybindingService;
-    kbs.addDynamicKeybinding('-editor.action.insertCursorAtEndOfEachLineSelected', null, () => {});
-    kbs.addDynamicKeybinding('-editor.action.blockComment', null, () => {});
-    kbs.addDynamicKeybinding('-editor.action.formatDocument', null, () => {});
+    try {
+      const kbs = me._standaloneKeybindingService;
+      // In Monaco 0.52, we need to use the proper API to remove keybindings
+      // The minus prefix doesn't work anymore
+      if (kbs.removeKeybinding) {
+        // Try the newer API first
+        kbs.removeKeybinding('editor.action.insertCursorAtEndOfEachLineSelected');
+        kbs.removeKeybinding('editor.action.blockComment');
+        kbs.removeKeybinding('editor.action.formatDocument');
+      } else {
+        // Fall back to overriding with empty keybinding
+        const emptyKeybinding = monaco.KeyMod.chord(0, 0); // No key
+        kbs.addDynamicKeybinding('editor.action.insertCursorAtEndOfEachLineSelected', emptyKeybinding, () => {});
+        kbs.addDynamicKeybinding('editor.action.blockComment', emptyKeybinding, () => {});
+        kbs.addDynamicKeybinding('editor.action.formatDocument', emptyKeybinding, () => {});
+      }
+    } catch (e) {
+      console.warn('Failed to remove default keybindings:', e);
+      // Continue anyway - this is not critical
+    }
   };
   const l = {
     Unknown: 'unknown',

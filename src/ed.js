@@ -445,7 +445,7 @@ D.Ed.prototype = {
       if (ed.filename) ed.container.tab.titleElement[0].title = ed.filename;
     }
     const docTitle = `${ed.isModified ? '⬤ ' : ''}${ed.title}${filename} - ${ed.ide.caption}`;
-    D.ide.floating && $('title', ed.dom.ownerDocument).text(docTitle);
+    D.ENABLE_FLOATING_MODE && D.ide.floating && $('title', ed.dom.ownerDocument).text(docTitle);
     ed.container.tab.closeElement.toggleClass('modified', ed.isModified);
   },
   blockCursor(x) { this.me.updateOptions({ cursorStyle: x ? 'block' : 'line' }); },
@@ -462,7 +462,7 @@ D.Ed.prototype = {
       p.setActiveContentItem && p.setActiveContentItem(q);
       q = p; p = p.parent;
     } // reveal in golden layout
-    if (D.ide.floating) {
+    if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
       ed.updateTitle();
       D.el.getCurrentWindow().focus();
     }
@@ -484,7 +484,7 @@ D.Ed.prototype = {
     }
   },
   close() {
-    if (D.ide.floating) {
+    if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
       this.me.getModel().dispose();
       delete D.ide.wins[this.id];
       this.container && this.container.close();

@@ -10,7 +10,7 @@ D.IDE = function IDE(opts = {}) {
   this.lbarRecreate();
   D.ide = ide;
   ide.dom = I.ide; I.ide.hidden = 0;
-  ide.floating = opts.floating;
+  ide.floating = D.ENABLE_FLOATING_MODE ? opts.floating : 0;
   ide.hadErr = -1;
   ide.ipc = opts.ipc;
   // lines to execute: AtInputPrompt consumes one item from the queue, HadError empties it
@@ -75,7 +75,7 @@ D.IDE = function IDE(opts = {}) {
       if (!w.bwId) D.elw.focus();
       w.focus(); return !1;
     };
-    D.el && D.prf.floating() && D.IPC_CreateWindow(1);
+    D.el && D.ENABLE_FLOATING_MODE && D.prf.floating() && D.IPC_CreateWindow(1);
   }
   // We need to be able to temporarily block the stream of messages coming from socket.io
   // Creating a floating window can only be done asynchronously and it's possible that a message
@@ -629,7 +629,7 @@ D.IDE = function IDE(opts = {}) {
     },
     ReplyGetSyntaxInformation(x) {
       D.parseSyntaxInformation(x);
-      D.ipc && D.ipc.server.broadcast('syntax', D.syntax);
+      D.ipc && D.ipc.server && D.ipc.server.broadcast('syntax', D.syntax);
     },
     ValueTip(x) {
       const req = ide.valueTipRequests[x.token];
@@ -708,7 +708,7 @@ D.IDE = function IDE(opts = {}) {
       const editorOpts = { id: w, name: ee.name, tc: ee.debugger };
       !editorOpts.tc && (ide.hadErr = -1);
       ide.block(); // unblock the message queue once monaco ready
-      if (D.el && D.prf.floating() && !ide.dead) {
+      if (D.el && D.ENABLE_FLOATING_MODE && D.prf.floating() && !ide.dead) {
         D.IPC_LinkEditor({ editorOpts, ee });
         done = 1;
       } else if (D.elw && !D.elw.isFocused()) D.elw.focus();
@@ -849,7 +849,7 @@ D.IDE = function IDE(opts = {}) {
     ReplyTreeList(x) { ide.wse.replyTreeList(x); },
     StatusOutput(x) {
       if (!D.el) return;
-      D.ipc.server.emit(D.stw_bw.socket, 'add', x);
+      D.ipc && D.ipc.server && D.ipc.server.emit(D.stw_bw.socket, 'add', x);
       !D.prf.statusWindow() && D.prf.autoStatus() && D.prf.statusWindow(1);
     },
     ReplyGetLog(x) {
@@ -953,7 +953,7 @@ D.IDE.prototype = {
       '{RIDE_VER}': v.version,
     };
     ide.caption = D.prf.title().replace(/\{\w+\}/g, (x) => m[x.toUpperCase()] || x) || 'Dyalog';
-    D.ipc && D.ipc.server.broadcast('caption', ide.caption);
+    D.ipc && D.ipc.server && D.ipc.server.broadcast('caption', ide.caption);
     document.title = ide.caption;
   },
   focusWin(w) {
@@ -999,7 +999,7 @@ D.IDE.prototype = {
   LBR: D.prf.lbar.toggle,
   SBR: D.prf.sbar.toggle,
   SSW: D.prf.statusWindow.toggle,
-  FLT: D.prf.floating.toggle,
+  FLT: () => { if (D.ENABLE_FLOATING_MODE) D.prf.floating.toggle(); },
   WRP: D.prf.wrap.toggle,
   TVB: D.prf.breakPts.toggle,
   LN: D.prf.lineNums.toggle,

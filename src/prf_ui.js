@@ -44,12 +44,14 @@
   function ok() { apply() && cancel(); }
   D.prf_ui = function PrfUI(tab) {
     if (D.prf_bw) {
-      D.ipc.server.emit(D.prf_bw.socket, 'show', tab);
+      if (D.ENABLE_FLOATING_MODE && D.ipc.server) {
+        D.ipc.server.emit(D.prf_bw.socket, 'show', tab);
+      }
       const bw = D.el.BrowserWindow.fromId(D.prf_bw.id);
       bw.show();
       return !1;
     }
-    if (D.ide && D.ide.floating) {
+    if (D.ide && D.ENABLE_FLOATING_MODE && D.ide.floating) {
       D.ipc.of.ride_master.emit('prfShow', tab);
       return !1;
     }

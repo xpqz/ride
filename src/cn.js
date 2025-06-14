@@ -356,6 +356,11 @@
         } else if (/^UsingProtocol=/.test(m)) {
           if (m.slice(m.indexOf('=') + 1) === '2') {
             handshakeDone = true;
+            // Clear the connection timeout - connection successful
+            if (D.tmr) {
+              clearTimeout(D.tmr);
+              delete D.tmr;
+            }
           } else {
             err('Unsupported Ride protocol version');
             break;
@@ -417,7 +422,7 @@
     }
     return null;
   };
-  const ct = process.env.RIDE_CONNECT_TIMEOUT || 60000;
+  const ct = process.env.RIDE_CONNECT_TIMEOUT || 300000; // Increased from 60s to 5 minutes
   const cancelOp = (c) => {
     const cancel = (e) => {
       if (e) {
@@ -682,8 +687,14 @@
               srv = 0;
               clt = y;
               initInterpreterConn();
-              new D.IDE().setConnInfo(adr.address, adr.port, sel ? sel.name : '');
-              D.lastSpawnedExe = x.exe;
+              try {
+                console.log('RIDE: Creating IDE instance');
+                new D.IDE().setConnInfo(adr.address, adr.port, sel ? sel.name : '');
+                D.lastSpawnedExe = x.exe;
+              } catch (ideError) {
+                console.error('RIDE: Failed to create IDE:', ideError);
+                toastr.error('Failed to initialize IDE: ' + ideError.message);
+              }
             });
             srv.on('error', (e) => {
               log(`listen failed: ${e}`);
@@ -772,18 +783,62 @@
     + '\n  &Third Party Licences    =TPL';
     D.installMenu(D.parseMenuDSL(m));
   };
+  // Define winstate at module level so it's accessible throughout cn.js
+  let winstate;
+  
   D.cn = () => { // set up Connect page
-    q = J.cn;
-    I.cn.hidden = 0;
-    const winstate = D.el.getGlobal('winstate');
-    $(I.cn).splitter().on('splitter-resize', () => {
-      winstate.launchWin.width = q.lhs.offsetWidth;
-    });
-    setTimeout(setUpMenu, 100);
-    D.conns = [];
-    if (fs.existsSync(cnFile)) {
-      D.conns.push(...JSON.parse(fs.readFileSync(cnFile).toString()));
-      D.conns_modified = +fs.statSync(cnFile).mtime;
+    console.log('RIDE: D.cn() called - setting up Connect page');
+    try {
+      console.log('RIDE: Setting q = J.cn');
+      q = J.cn;
+      if (!q) {
+        console.error('RIDE: J.cn is undefined!');
+        return;
+      }
+      
+      console.log('RIDE: Making connection dialog visible');
+      I.cn.hidden = 0;
+      
+      console.log('RIDE: Getting winstate');
+      winstate = D.el.getGlobal('winstate');
+      if (!winstate) {
+        console.warn('RIDE: winstate not found, creating default');
+        // Create a minimal winstate for non-floating mode
+        winstate = {
+          dx: 0,
+          launchWin: {
+            width: 400,
+            expandedWidth: 885,
+            expanded: false
+          }
+        };
+      }
+      
+      console.log('RIDE: Setting up splitter');
+      try {
+        $(I.cn).splitter().on('splitter-resize', () => {
+          if (winstate && winstate.launchWin) {
+            winstate.launchWin.width = q.lhs.offsetWidth;
+          }
+        });
+      } catch (splitterErr) {
+        console.error('RIDE: Splitter error:', splitterErr);
+        // Continue anyway - splitter is not critical
+      }
+      
+      console.log('RIDE: Setting up menu');
+      setTimeout(setUpMenu, 100);
+      
+      console.log('RIDE: Loading connections');
+      D.conns = [];
+      if (fs.existsSync(cnFile)) {
+        D.conns.push(...JSON.parse(fs.readFileSync(cnFile).toString()));
+        D.conns_modified = +fs.statSync(cnFile).mtime;
+      }
+    } catch (e) {
+      console.error('RIDE: Error in D.cn():', e);
+      console.error('RIDE: Stack trace:', e.stack);
+      // Don't throw - try to continue
     }
     getLocalInterpreters();
     const hasCreated = createPresets();
@@ -975,6 +1030,13 @@
     // };
     const toggleConfig = (show) => {
       const expanded = (show === undefined) ? !$(q.rhs).is(':visible') : !!show;
+      
+      // Handle case where winstate might not be initialized
+      if (!winstate) {
+        console.warn('RIDE: winstate not initialized in toggleConfig');
+        return;
+      }
+      
       const { height } = D.elw.getContentBounds();
       const newWidth = expanded ? winstate.launchWin.expandedWidth : winstate.launchWin.width;
       winstate.launchWin.expanded = expanded;
@@ -982,9 +1044,17 @@
       D.elw.setMinimumSize(minwidth, 400);
       D.elw.setContentSize(newWidth, height);
       setTimeout(() => { I.cn.toggleMaximize(expanded ? winstate.launchWin.width : 0); }, 10);
-      nodeRequire('electron').ipcRenderer.send('save-win', true);
+      
+      // Only send IPC if available
+      if (nodeRequire && nodeRequire('electron').ipcRenderer) {
+        nodeRequire('electron').ipcRenderer.send('save-win', true);
+      }
     };
-    toggleConfig(winstate.launchWin.expanded);
+    
+    // Only call toggleConfig if winstate is available
+    if (winstate && winstate.launchWin) {
+      toggleConfig(winstate.launchWin.expanded);
+    }
     $(q.favs).list().sortable({
       cursor: 'move',
       revert: true,
