@@ -663,7 +663,9 @@ D.IDE = function IDE(opts = {}) {
         w.close();
         w.id = -1;
       } else if (w) {
-        w.me.getModel().dispose();
+        // Dispose the editor instance first (this cleans up all event handlers)
+        w.me.dispose();
+        // The model is automatically disposed when the editor is disposed
         w.container && w.container.close();
       }
       delete ide.wins[x.win]; ide.focusMRUWin();

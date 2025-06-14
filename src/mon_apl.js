@@ -947,8 +947,17 @@
         let i = 0;
 
         (function defineRanges() {
-          const { length } = model._tokens._lineTokens;
-          for (i; i < length; i++) {
+          // In Monaco 0.52, we need to check tokenization differently
+          let length;
+          try {
+            // Try to get the tokenized line count
+            length = model._tokenization?._tokenizationStateStore?._beginState?.length || 0;
+          } catch (e) {
+            // If internal API is not accessible, use line count
+            length = Math.min(i + 100, totLength); // Process in chunks
+          }
+          
+          for (i; i < length && i < totLength; i++) {
             const a = ((getState(model, i) || {}).a || []).slice().reverse();
             if (!pa) pa = a;
             else if (pa.length < a.length) {
@@ -969,7 +978,7 @@
               pa = a;
             }
           }
-          if (token.isCancellationRequested || length === totLength) {
+          if (token.isCancellationRequested || i >= totLength) {
             openRanges.forEach((r) => ranges.push({ ...r, end: totLength }));
             resolve(ranges);
             return;
