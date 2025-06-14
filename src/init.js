@@ -113,31 +113,14 @@ console.log('RIDE: init.js file loaded');
     if (D.el) {
       const qp = nodeRequire('querystring').parse(loc.search.slice(1));
       if (qp.type === 'prf') {
-        D.ipc.config.appspace = qp.appid;
         document.body.className += ' floating-window';
-        if (D.ENABLE_FLOATING_MODE) {
-          D.IPC_Prf();
-        } else {
-          console.log('RIDE: Preference window in non-floating mode - skipping IPC');
-        }
+        console.log('RIDE: Preference window loaded');
         I.splash.hidden = 1;
       } else if (qp.type === 'editor') {
-        // Only start IPC client for floating windows if feature flag is enabled
-        if (D.ENABLE_FLOATING_MODE) {
-          D.ipc.config.appspace = qp.appid;
-          document.body.className += ' floating-window';
-          D.IPC_Client(+qp.winId);
-          I.splash.hidden = 1;
-        } else {
-          // If floating mode is disabled, close this window
-          window.close();
-        }
+        // Floating mode disabled, close this window
+        window.close();
       } else {
         // Main window startup
-        const appid = `ride_${+new Date()}`;
-        
-        // Always create auxiliary windows for compatibility
-        // These are needed for preferences dialog, task dialogs, and status window
         console.log('RIDE: Creating auxiliary windows');
         
         // Create preference window
@@ -157,7 +140,7 @@ console.log('RIDE: init.js file loaded');
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`${loc}?type=prf&appid=${appid}`);
+        bw.loadURL(`${loc}?type=prf`);
         D.prf_bw = { id: bw.id };
         
         // Create dialog window
@@ -181,7 +164,7 @@ console.log('RIDE: init.js file loaded');
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`file://${__dirname}/dialog.html?appid=${appid}`);
+        bw.loadURL(`file://${__dirname}/dialog.html`);
         D.dlg_bw = { id: bw.id };
         
         // Create status window
@@ -204,44 +187,30 @@ console.log('RIDE: init.js file loaded');
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`file://${__dirname}/status.html?appid=${appid}`);
+        bw.loadURL(`file://${__dirname}/status.html`);
         D.stw_bw = { id: bw.id };
         
         D.elw.focus();
         
-        if (D.ENABLE_FLOATING_MODE) {
-          // Start IPC server and wait for windows to signal ready
-          console.log('RIDE: Starting IPC server for floating mode');
-          const winsLoaded = D.IPC_Server();
-          Promise.all(winsLoaded).then(() => {
-            I.splash.hidden = 1;
-            nodeRequire(`${__dirname}/src/cn`)();
-            if (D.cn) D.cn();
-          });
-        } else {
-          // Skip IPC but still load connection dialog
-          console.log('RIDE: Floating mode disabled, loading connection dialog directly');
-          // Open developer tools to see errors
-          if (D.elw && D.elw.webContents) {
-            D.elw.webContents.openDevTools();
-          }
-          // Give windows a moment to initialize
-          setTimeout(() => {
-            console.log('RIDE: Hiding splash screen');
-            I.splash.hidden = 1;
-            console.log('RIDE: Loading connection dialog');
-            try {
-              nodeRequire(`${__dirname}/src/cn`)();
-              if (D.cn) {
-                console.log('RIDE: Showing connection dialog');
-                D.cn();
-              }
-            } catch (e) {
-              console.error('RIDE: Failed to load connection dialog:', e);
-              alert('Failed to load connection dialog: ' + e.message);
-            }
-          }, 100);
+        // Load connection dialog directly
+        console.log('RIDE: Loading connection dialog directly');
+        // Open developer tools to see errors
+        if (D.elw && D.elw.webContents) {
+          D.elw.webContents.openDevTools();
         }
+        // Give windows a moment to initialize
+        setTimeout(() => {
+          console.log('RIDE: Hiding splash screen');
+          I.splash.hidden = 1;
+          console.log('RIDE: Loading connection dialog');
+          try {
+            nodeRequire(`${__dirname}/src/cn`)();
+            // D.cn() is called automatically by the module if needed
+          } catch (e) {
+            console.error('RIDE: Failed to load connection dialog:', e);
+            alert('Failed to load connection dialog: ' + e.message);
+          }
+        }, 100);
       }
     } else {
       const ws = new WebSocket((loc.protocol === 'https:' ? 'wss://' : 'ws://') + loc.host);
@@ -287,7 +256,6 @@ console.log('RIDE: init.js file loaded');
         return;
       }
       try {
-        D.ipc && D.ipc.server && D.ipc.server.stop();
         D.ide && D.prf.connectOnQuit() && D.commands.CNC();
         if (D.ide && !D.ide.connected && D.el) D.wins[0].histWrite();
       } finally {

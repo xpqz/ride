@@ -143,16 +143,24 @@
         });
       } else if (process.platform === 'darwin') {
         const rd = '/Applications';
-        ls(rd).forEach((x) => {
+        console.log('RIDE: Scanning for Dyalog installations in', rd);
+        const files = ls(rd);
+        console.log('RIDE: Found', files.filter(x => x.includes('Dyalog')).length, 'Dyalog-related entries');
+        files.forEach((x) => {
           const n = /^Dyalog-(\d+\.\d+)\.app$/.exec(x);
-          const exe = `${rd}/${x}/Contents/Resources/Dyalog/mapl`;
-          n && fs.existsSync(exe) && interpreters.push({
-            exe,
-            ver: parseVer(n[1]),
-            bits: 64,
-            edition: 'unicode',
-            opt: '',
-          });
+          if (n) {
+            const exe = `${rd}/${x}/Contents/Resources/Dyalog/mapl`;
+            console.log('RIDE: Checking', x, '- exe exists:', fs.existsSync(exe));
+            if (fs.existsSync(exe)) {
+              interpreters.push({
+                exe,
+                ver: parseVer(n[1]),
+                bits: 64,
+                edition: 'unicode',
+                opt: '',
+              });
+            }
+          }
         });
       } else {
         const rd = '/opt/mdyalog';
@@ -357,9 +365,13 @@
           if (m.slice(m.indexOf('=') + 1) === '2') {
             handshakeDone = true;
             // Clear the connection timeout - connection successful
+            console.log('RIDE: Handshake done at', new Date().toISOString(), 'D.tmr exists:', !!D.tmr);
             if (D.tmr) {
               clearTimeout(D.tmr);
               delete D.tmr;
+              console.log('RIDE: Connection timeout cleared successfully in handshake');
+            } else {
+              console.error('RIDE: WARNING - No timeout to clear in handshake!');
             }
           } else {
             err('Unsupported Ride protocol version');
@@ -422,21 +434,30 @@
     }
     return null;
   };
-  const ct = process.env.RIDE_CONNECT_TIMEOUT || 300000; // Increased from 60s to 5 minutes
-  const cancelOp = (c) => {
-    const cancel = (e) => {
+  const ct = process.env.RIDE_CONNECT_TIMEOUT || 60000; // 60 seconds default timeout
+  const cancelOp = (c, customCancel) => {
+    const cancel = customCancel || ((e) => {
       if (e) {
+        console.log('RIDE: Cancel operation called manually');
         clearTimeout(D.tmr);
         delete D.tmr;
       } else {
+        console.error('RIDE: Connection timed out after', ct, 'ms');
+        console.error('RIDE: Stack trace:', new Error().stack);
         err('Timed out');
       }
       c && c.end();
       hideDlgs();
       return !1;
-    };
-    D.tmr = setTimeout(cancel, ct);
-    q.connecting_dlg_close.onclick = cancel;
+    });
+    console.log('RIDE: Setting connection timeout for', ct, 'ms at', new Date().toISOString());
+    console.log('RIDE: Caller stack:', new Error().stack);
+    if (D.tmr) {
+      console.warn('RIDE: WARNING - Timeout already exists, clearing old one first');
+      clearTimeout(D.tmr);
+    }
+    D.tmr = setTimeout(() => cancel(false), ct);
+    q.connecting_dlg_close.onclick = () => cancel(true);
   };
   const connect = (x) => {
     let m = net; // m:module used to create connection
@@ -475,9 +496,7 @@
       clt = 0;
     });
     cancelOp(clt);
-    // net module needs a nudge to connect properly
-    // see https://github.com/Dyalog/ride/issues/387
-    D.ipc.server.broadcast('nudge');
+    // IPC removed - nudge no longer needed
   };
 
   const go = (conf) => { // "Go" buttons in the favs or the "Go" button at the bottom
@@ -581,7 +600,7 @@
             q.listen_dlg_host.textContent = o.address !== '::' ? o.address : 'host';
             q.listen_dlg_port.textContent = `${o.port}`;
           });
-          D.ipc.server.broadcast('nudge');
+          // IPC removed - nudge broadcast no longer needed
           break;
         }
         case 'start': {
@@ -663,15 +682,25 @@
               }
             };
             const cancel = (e) => {
+              console.log('RIDE: Cancel called in spawn handler, e:', !!e, 'D.tmr:', !!D.tmr, 'at', new Date().toISOString());
               if (e) {
                 clearTimeout(D.tmr);
                 delete D.tmr;
               } else {
+                // Check if we're already connected before killing the process
+                if (D.ide && D.ide.connected) {
+                  console.error('RIDE: WARNING - Timeout fired but already connected! Ignoring.');
+                  clearTimeout(D.tmr);
+                  delete D.tmr;
+                  return !1;
+                }
+                console.error('RIDE: Spawn timeout fired! Stack:', new Error().stack);
                 err('Timed out');
               }
               srv && srv.close();
               srv = 0;
-              if (child) {
+              if (child && !D.ide?.connected) {
+                console.log('RIDE: Killing child process due to timeout');
                 child.off('exit', onExit);
                 child.off('error', onError);
                 child.kill();
@@ -734,8 +763,7 @@
               child.on('exit', onExit);
               child.on('error', onError);
             });
-            D.tmr = setTimeout(cancel, ct);
-            q && (q.connecting_dlg_close.onclick = cancel);
+            cancelOp(null, cancel); // Use cancelOp with custom cancel function for spawn
           }
           break;
         }
@@ -829,11 +857,16 @@
       console.log('RIDE: Setting up menu');
       setTimeout(setUpMenu, 100);
       
-      console.log('RIDE: Loading connections');
+      console.log('RIDE: Loading connections from', cnFile);
       D.conns = [];
       if (fs.existsSync(cnFile)) {
-        D.conns.push(...JSON.parse(fs.readFileSync(cnFile).toString()));
+        const fileContent = fs.readFileSync(cnFile).toString();
+        const parsed = JSON.parse(fileContent);
+        console.log('RIDE: Loaded', parsed.length, 'connections from file');
+        D.conns.push(...parsed);
         D.conns_modified = +fs.statSync(cnFile).mtime;
+      } else {
+        console.log('RIDE: No connections file found');
       }
     } catch (e) {
       console.error('RIDE: Error in D.cn():', e);
@@ -841,9 +874,17 @@
       // Don't throw - try to continue
     }
     getLocalInterpreters();
+    console.log('RIDE: Found', interpreters.length, 'local interpreters');
     const hasCreated = createPresets();
-    if (!D.conns.length) D.conns.push({ type: 'connect' });
-    D.conns.forEach((x) => { q.favs.appendChild(favDOM(x)); });
+    console.log('RIDE: Created presets:', hasCreated, 'Total connections:', D.conns.length);
+    if (!D.conns.length) {
+      console.log('RIDE: No connections, adding default');
+      D.conns.push({ type: 'connect' });
+    }
+    D.conns.forEach((x, i) => {
+      console.log('RIDE: Adding connection', i, ':', x.name || x.type);
+      q.favs.appendChild(favDOM(x));
+    });
     if (hasCreated) save();
     I.cn.onkeyup = (x) => {
       const k = D.util.fmtKey(x);

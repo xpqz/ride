@@ -28,18 +28,19 @@ D.IDE = function IDE(opts = {}) {
   };
   ide.host = ''; ide.port = ''; ide.wsid = '';
   ide.wins = {};
+  // Focus management setup (needed for both floating and non-floating modes)
+  this._focusedWin = null;
+  Object.defineProperty(ide, 'focusedWin', {
+    set(w) {
+      console.log('RIDE: Setting focusedWin to:', w && w.constructor.name, 'id:', w && w.id);
+      this._focusedWin = w;
+    },
+    get() { return this._focusedWin; },
+  });
+  
   if (ide.floating) {
     ide.connected = 1;
-    this._focusedWin = null;
-    ide.ipc.emit('getSyntax');
-    Object.defineProperty(ide, 'focusedWin', {
-      set(w) {
-        ide.ipc.emit('focusedWin', w.id);
-        this._focusedWin = w;
-      },
-      get() { return this._focusedWin; },
-    });
-    ide.switchWin = (x) => { ide.ipc.emit('switchWin', x); };
+    ide.switchWin = (x) => { /* IPC removed - switchWin no longer needed */ };
   } else {
     D.prf.title(ide.updTitle.bind(ide));
     I.sb_busy.hidden = true;
@@ -75,7 +76,7 @@ D.IDE = function IDE(opts = {}) {
       if (!w.bwId) D.elw.focus();
       w.focus(); return !1;
     };
-    D.el && D.ENABLE_FLOATING_MODE && D.prf.floating() && D.IPC_CreateWindow(1);
+    // Floating mode removed
   }
   // We need to be able to temporarily block the stream of messages coming from socket.io
   // Creating a floating window can only be done asynchronously and it's possible that a message
@@ -518,6 +519,7 @@ D.IDE = function IDE(opts = {}) {
 
   ide.handlers = { // for Ride protocol messages
     Identify(x) {
+      console.log('RIDE: Received Identify message at', new Date().toISOString());
       D.remoteIdentification = x;
       D.apiVersion = x.apiVersion || 0;
       D.isClassic = x.arch[0] === 'C';
@@ -535,8 +537,14 @@ D.IDE = function IDE(opts = {}) {
       ide.updTitle();
       ide.connected = 1;
       ide.updPW();
-      clearTimeout(D.tmr);
-      delete D.tmr;
+      console.log('RIDE: Clearing timeout in Identify handler at', new Date().toISOString(), 'D.tmr exists:', !!D.tmr);
+      if (D.tmr) {
+        clearTimeout(D.tmr);
+        delete D.tmr;
+        console.log('RIDE: Connection timeout cleared successfully in Identify');
+      } else {
+        console.error('RIDE: WARNING - No timeout to clear in Identify!');
+      }
       if (D.apiVersion > 0) {
         D.send('GetLog', { format: 'json' });
       }
@@ -629,7 +637,7 @@ D.IDE = function IDE(opts = {}) {
     },
     ReplyGetSyntaxInformation(x) {
       D.parseSyntaxInformation(x);
-      D.ipc && D.ipc.server && D.ipc.server.broadcast('syntax', D.syntax);
+      // IPC removed - syntax broadcast no longer needed
     },
     ValueTip(x) {
       const req = ide.valueTipRequests[x.token];
@@ -656,19 +664,24 @@ D.IDE = function IDE(opts = {}) {
     },
     ReplySaveChanges(x) { const w = ide.wins[x.win]; w && w.saved(x.err); },
     CloseWindow(x) {
+      console.log('RIDE: CloseWindow called for window', x.win);
       const w = ide.wins[x.win];
       if (!w) return;
+      console.log('RIDE: Window type:', w.constructor.name, 'bwId:', w.bwId);
       if (w.bwId) {
         ide.block();
         w.close();
         w.id = -1;
       } else if (w) {
         // Dispose the editor instance first (this cleans up all event handlers)
+        console.log('RIDE: Disposing editor instance');
         w.me.dispose();
         // The model is automatically disposed when the editor is disposed
         w.container && w.container.close();
       }
-      delete ide.wins[x.win]; ide.focusMRUWin();
+      delete ide.wins[x.win];
+      console.log('RIDE: Calling focusMRUWin after closing window', x.win);
+      ide.focusMRUWin();
       ide.WSEwidth = ide.wsew; ide.DBGwidth = ide.dbgw;
       w.tc && ide.getStats();
     },
@@ -711,7 +724,7 @@ D.IDE = function IDE(opts = {}) {
       !editorOpts.tc && (ide.hadErr = -1);
       ide.block(); // unblock the message queue once monaco ready
       if (D.el && D.ENABLE_FLOATING_MODE && D.prf.floating() && !ide.dead) {
-        D.IPC_LinkEditor({ editorOpts, ee });
+        // IPC removed - editor linking no longer needed
         done = 1;
       } else if (D.elw && !D.elw.isFocused()) D.elw.focus();
       if (done) return;
@@ -851,7 +864,7 @@ D.IDE = function IDE(opts = {}) {
     ReplyTreeList(x) { ide.wse.replyTreeList(x); },
     StatusOutput(x) {
       if (!D.el) return;
-      D.ipc && D.ipc.server && D.ipc.server.emit(D.stw_bw.socket, 'add', x);
+      // IPC removed - status window updates no longer needed
       !D.prf.statusWindow() && D.prf.autoStatus() && D.prf.statusWindow(1);
     },
     ReplyGetLog(x) {
@@ -955,7 +968,7 @@ D.IDE.prototype = {
       '{RIDE_VER}': v.version,
     };
     ide.caption = D.prf.title().replace(/\{\w+\}/g, (x) => m[x.toUpperCase()] || x) || 'Dyalog';
-    D.ipc && D.ipc.server && D.ipc.server.broadcast('caption', ide.caption);
+    // IPC removed - caption broadcast no longer needed
     document.title = ide.caption;
   },
   focusWin(w) {
@@ -968,8 +981,10 @@ D.IDE.prototype = {
   },
   focusMRUWin() { // most recently used
     const w = this.getMRUWin();
+    console.log('RIDE: focusMRUWin - focusing window:', w.constructor.name, 'id:', w.id);
     D.elw && !w.bwId && D.elw.focus();
     w.focus();
+    console.log('RIDE: focusMRUWin - focus() called on window');
   },
   getMRUWin(tracer) { // most recently focused window (filtered by tracer if set)
     const { wins } = this;
@@ -989,7 +1004,7 @@ D.IDE.prototype = {
     b.className = `zoom${z} ${b.className.split(/\s+/).filter((s) => !/^zoom-?\d+$/.test(s)).join(' ')}`;
     this.gl.container.resize();
     if (this.floating) {
-      D.ipc.of.ride_master.emit('zoom', z);
+      // IPC removed - zoom sync no longer needed
       return;
     }
     const { wins } = this;
@@ -1022,8 +1037,8 @@ D.IDE.prototype = {
       if (v) u[k] = v;
       bws = bws || v === -1;
     });
-    if (bws && D.ipc.server) {
-      D.ipc.server.broadcast('getUnsaved');
+    if (bws) {
+      // IPC removed - getUnsaved broadcast no longer needed
     } else {
       D.send('Edit', D.pendingEdit);
       delete D.pendingEdit;

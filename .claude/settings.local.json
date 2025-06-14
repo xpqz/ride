@@ -19,7 +19,9 @@
       "Bash(find:*)",
       "Bash(open:*)",
       "Bash(log show:*)",
-      "Bash(npm run clean:*)"
+      "Bash(npm run clean:*)",
+      "Bash(pkill:*)",
+      "Bash(true)"
     ],
     "deny": []
   }

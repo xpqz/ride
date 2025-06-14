@@ -72,8 +72,7 @@
     UND(me) { me.trigger('D', 'undo'); },
     PRF() { D.prf_ui(); },
     ABT() {
-      if (D.el && D.ide && D.ENABLE_FLOATING_MODE && D.ide.floating) D.ipc.of.ride_master.emit('ABT');
-      else D.abt();
+      D.abt();
     },
     CAM() {
       D.send('ClearTraceStopMonitor', { token: 0 });
@@ -124,10 +123,7 @@
       openURI(D.hlp.THIRDPARTY);
     },
     OWS() {
-      if (D.el && D.ENABLE_FLOATING_MODE && D.ide.floating) {
-        D.ipc.of.ride_master.emit('OWS');
-        return;
-      }
+      // Floating mode removed
       if (D.el && D.isLocalInterpreter) {
         const x = D.el.dialog.showOpenDialogSync(D.elw, {
           title: 'Open file',
@@ -150,10 +146,7 @@
     },
     NEW() {
       if (!D.el) return;
-      if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
-        D.ipc.of.ride_master.emit('NEW');
-        return;
-      }
+      // Floating mode removed
       if (D.lastSpawnedExe) {
         const e = {};
         Object.keys(process.env).forEach((k) => { e[k] = process.env[k]; });
@@ -245,10 +238,7 @@
     },
     LOG() {
       if (!D.el) return;
-      if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
-        D.ipc.of.ride_master.emit('LOG');
-        return;
-      }
+      // Floating mode removed
       const w = new D.el.BrowserWindow({
         width: 400,
         height: 500,
@@ -348,8 +338,22 @@
   const defCmd = (x) => {
     const c = D.commands;
     c[x] || (c[x] = (me) => {
-        const h = me.dyalogCmds;
-        (h && h[x]) ? h.execCommand(x) : $.alert(`Command ${x} not implemented.`);
+        if (x === 'ER') console.log('RIDE: ER command triggered via defCmd, me:', me, 'dyalogCmds:', me.dyalogCmds);
+        // Get the currently focused window instead of using the captured me
+        const fw = D.ide && D.ide.focusedWin;
+        if (fw && fw[x]) {
+          console.log('RIDE: Using focusedWin for command', x, 'window:', fw.constructor.name, 'id:', fw.id);
+          fw.execCommand(x);
+        } else {
+          // Fallback to original behavior
+          const h = me.dyalogCmds;
+          if (h && h[x]) {
+            h.execCommand(x);
+          } else {
+            console.error('RIDE: Command', x, 'not found. focusedWin:', fw, 'dyalogCmds:', h);
+            $.alert(`Command ${x} not implemented.`);
+          }
+        }
     });
   };
   ('CLS CBP MA AC IT VAL indentOrComplete indentMoreOrAutocomplete STL TVO TVB'
@@ -399,9 +403,9 @@
         if (cmd === 'STL') { stlkbs.push(nkc); return; }
         if (cmd === 'FX') { fxkbs.push(nkc); return; }
         if (cmd === 'ER') {
-          cond = 'tracer && !editorHasMultipleSelections && !findInputFocussed && !inSnippetMode';
+          cond = '(session || tracer) && !editorHasMultipleSelections && !findInputFocussed && !inSnippetMode';
         } else if (cmd === 'TC' || cmd === 'IT') {
-          cond = 'tracer';
+          cond = '(session || tracer)';
         } else if (cmd === 'LL' || cmd === 'RL') {
           cond = '!suggestWidgetVisible && !findInputFocussed';
         } else if (nkc === kc.Escape) cond = '!suggestWidgetVisible && !editorHasMultipleSelections && !findWidgetVisible && !inSnippetMode';
@@ -412,7 +416,10 @@
     addCmd(D.keyMap.dyalog);
     me.addCommand(
       kc.Tab,
-      () => ed.indentOrComplete(me),
+      () => {
+        const h = me.dyalogCmds;
+        if (h && h.indentOrComplete) h.indentOrComplete(me);
+      },
       '!suggestWidgetVisible && !editorHasMultipleSelections && !findWidgetVisible && !inSnippetMode && !editorTabMovesFocus',
     );
     me.addCommand(
@@ -420,9 +427,18 @@
       () => me.trigger('editor', 'acceptSelectedSuggestion'),
       'suggestWidgetVisible',
     );
-    me.addCommand(kc.DownArrow, () => ed.DC(me), '!suggestWidgetVisible && !findInputFocussed');
-    me.addCommand(kc.UpArrow, () => ed.UC(me), '!suggestWidgetVisible && !findInputFocussed');
-    me.addCommand(kc.RightArrow, () => ed.RC(me), '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.DownArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.DC) h.DC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.UpArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.UC) h.UC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.RightArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.RC) h.RC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
 
     me.addAction({
       id: 'dyalog-skip-to-line',
@@ -431,7 +447,10 @@
       precondition: 'tracer && !session',
       keybindings: stlkbs,
       label: 'Skip to line',
-      run: (e) => ed.STL(e),
+      run: (e) => {
+        const h = e.dyalogCmds;
+        if (h && h.STL) h.STL(e);
+      },
     });
     me.addAction({
       id: 'dyalog-fix',
@@ -440,7 +459,10 @@
       precondition: '!tracer && !session',
       keybindings: fxkbs,
       label: 'Fix',
-      run: (e) => ed.FX(e),
+      run: (e) => {
+        const h = e.dyalogCmds;
+        if (h && h.FX) h.FX(e);
+      },
     });
   };
   D.remDefaultMap = (me) => {

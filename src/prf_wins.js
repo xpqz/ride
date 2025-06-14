@@ -27,11 +27,9 @@
         D.prf.floating() && D.prf.floating(0);
         q.fw.disabled = true;
       }
-      // Hide floating mode options if feature flag is disabled
-      if (!D.ENABLE_FLOATING_MODE) {
-        q.fw.closest('tr').style.display = 'none';
-        q.fs.closest('tr').style.display = 'none';
-      }
+      // Floating mode has been removed - always hide these options
+      q.fw.closest('tr').style.display = 'none';
+      q.fs.closest('tr').style.display = 'none';
       const updEnabling = () => {
         q.aim.disabled = !q.ai.checked;
         q.isw.disabled = !q.ai.checked;

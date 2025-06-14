@@ -10,55 +10,14 @@
     const el = require('@electron/remote');
     const bw = el.getCurrentWindow();
     const [width] = bw.getContentSize();
-    const qp = require('querystring').parse(window.location.search.slice(1));
     const iswin = /^win/i.test(process.platform);
     
-    // Check if floating mode is enabled
-    const ENABLE_FLOATING_MODE = el.getGlobal('D') && el.getGlobal('D').ENABLE_FLOATING_MODE;
-    
-    let rm;
-    if (ENABLE_FLOATING_MODE) {
-      const ipc = require('node-ipc').default;
-      ipc.config.id = 'statusWin';
-      ipc.config.appspace = qp.appid;
-      ipc.config.retry = 1500;
-      ipc.config.silent = true;
-      ipc.connectTo('ride_master', () => {
-        rm = ipc.of.ride_master;
-        rm.on('connect', () => {
-          window.onbeforeunload = (e) => {
-            e.returnValue = false;
-            rm.emit('statClose');
-          };
-          rm.emit('statCreated');
-        });
-        rm.on('disconnect', () => {
-          ipc.log('disconnected from ride_master'.notice);
-          window.onbeforeunload = null;
-          window.close();
-        });
-        // rm.on('add', (x) => add(x));
-        rm.on('add', add);
-        rm.on('setTheme', (theme) => {
-          document.getElementById('theme_dark').disabled = theme !== 'dark';
-          document.getElementById('theme_light').disabled = theme !== 'light';
-        });
-        rm.on('caption', (caption) => {
-          document.title =`Status Output - ${caption}`;
-        });
-      });
-    } else {
-      // In non-floating mode, this window should not be used directly
-      console.log('Status window loaded in non-floating mode - waiting for direct calls');
-    }
+    // Status window loaded - waiting for direct calls
+    console.log('Status window loaded - waiting for direct calls');
 
     window.onkeydown=function(x) {
       if (x.which===27) {
-        if (rm) {
-          rm.emit('statClose');
-        } else {
-          window.close();
-        }
+        window.close();
       }
     }
 

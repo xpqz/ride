@@ -52,8 +52,7 @@ const J = {};
     D.el = nodeRequire('@electron/remote');
     D.elm = D.el.require('@electron/remote/main');
     D.elw = D.el.getGlobal('elw');
-    D.ipc = nodeRequire('node-ipc').default;
-    D.ipc.config.logInColor = false;
+    // IPC system removed - no longer needed
     D = $.extend(D, nodeRequire('@electron/remote').getGlobal('D'));
     const plt = process.platform;
     D.win = /^win/i.test(plt);

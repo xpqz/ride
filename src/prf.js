@@ -6,9 +6,7 @@
 //  D.prf.foo.getDefault()                   // retrieve default value
 'use strict'
 
-// Feature flag to disable floating mode (Phase 1.1 of refactoring)
-// When false, floating mode is completely disabled regardless of user preference
-D.ENABLE_FLOATING_MODE = false;
+// Floating mode has been completely removed from the codebase
 
 D.prf = {};
 [ // name                 default (type is determined from default value; setter enforces type and handles encoding)
@@ -205,10 +203,7 @@ D.prf = {};
     if (l.length) y = p(); // old value as an object (only needed if we have any listeners)
     sx ? D.db.setItem(k, sx) : D.db.removeItem(k); // store
     for (let i = 0; i < l.length; i++) l[i](nx, y); // notify listeners
-    if (D.ipc) {
-      D.ipc.server && D.ipc.server.broadcast('prf', [k, nx]);
-      !s && D.ipc.of.ride_master && D.ipc.of.ride_master.emit('prf', [k, nx]);
-    }
+    // IPC removed - preference sync no longer needed
     return nx;
   };
   D.prf[k] = p;
@@ -216,17 +211,13 @@ D.prf = {};
   p.toggle = () => p(!p());
 });
 
-// Override the floating preference getter to respect the feature flag
+// Floating mode has been completely removed - always return 0 (disabled)
 const originalFloating = D.prf.floating;
 D.prf.floating = function(x, s) {
-  if (x === undefined && !D.ENABLE_FLOATING_MODE) {
-    // When getting the value, always return 0 (disabled) if feature flag is off
-    return 0;
-  }
-  return originalFloating.call(this, x, s);
+  return 0; // Always disabled
 };
-D.prf.floating.getDefault = originalFloating.getDefault;
-D.prf.floating.toggle = originalFloating.toggle;
+D.prf.floating.getDefault = () => 0;
+D.prf.floating.toggle = () => {}; // No-op
 
 D.db = !nodeRequire ? localStorage : (function DB() {
   const rq = nodeRequire;
