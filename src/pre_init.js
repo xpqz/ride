@@ -40,6 +40,22 @@ const J = {};
     // Load Monaco Editor
     amdRequire(['vs/editor/editor.main'], () => {
       console.log('Monaco Editor loaded successfully');
+      
+      // Apply pending Monaco theme if one exists
+      if (D.pendingMonacoTheme) {
+        console.log('RIDE: Applying pending Monaco theme');
+        try {
+          // Need to check if setMonacoTheme is available
+          if (typeof D.setMonacoTheme === 'function') {
+            D.setMonacoTheme(D.pendingMonacoTheme);
+          } else {
+            console.log('RIDE: setMonacoTheme not yet available, keeping theme pending');
+          }
+        } catch (e) {
+          console.error('RIDE: Error applying pending Monaco theme:', e);
+        }
+      }
+      
       resolve();
     }, (err) => {
       console.error('Failed to load Monaco Editor:', err);

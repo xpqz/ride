@@ -44,7 +44,7 @@
     DMN() { move(1); }, // next line
     DMP() { move(-1); }, // prev line
     DMR() { // load demo script
-      if (!D.el || (D.ENABLE_FLOATING_MODE && D.ide.floating)) return;
+      if (!D.el) return; // Floating mode removed
       if (!inp) {
         inp = document.createElement('input');
         inp.type = 'file';

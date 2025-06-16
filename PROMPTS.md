@@ -45,7 +45,7 @@ This plan outlines the complete removal of floating mode from RIDE, retaining on
 
 ### 2.3 Inter-Window Communication (Week 4)
 - Replace IPC system with Electron's built-in IPC
-- Use `ipcMain` and `ipcRenderer` for main ” renderer communication
+- Use `ipcMain` and `ipcRenderer` for main ï¿½ renderer communication
 - Remove dependency on `node-ipc` package
 
 ## Phase 3: Remove Floating Mode Infrastructure
@@ -71,22 +71,222 @@ This plan outlines the complete removal of floating mode from RIDE, retaining on
 - Remove UI elements from `src/prf_wins.js` and `index.html`
 - Update preference migration to handle old settings
 
-## Phase 4: Fix Window Management
+## Phase 4: Fix Window Management - Multi-Session Architecture
 
-### 4.1 Session Window Lifecycle (Week 8)
-- Implement proper window creation for new sessions
-- Each session creates new BrowserWindow from main process
-- Sessions remain independent but share application instance
+### Initial Investigation Results
 
-### 4.2 Focus Management (Week 8)
-- Implement proper focus tracking across session windows
-- Fix macOS-specific focus issues
-- Ensure keyboard shortcuts work across windows
+The initial attempt to implement session tabs revealed fundamental architectural limitations:
 
-### 4.3 Window State Persistence (Week 9)
-- Save/restore window positions for each session
-- Handle multi-monitor setups correctly
-- Persist GoldenLayout state per session
+1. **Single Global TCP Connection**: RIDE uses one global `clt` variable for the interpreter connection
+2. **Single Message Router**: All protocol messages go through one `D.recv` function to `D.ide`
+3. **Global Protocol State**: The entire codebase assumes one active interpreter connection
+4. **Connection Lifecycle**: Connection code in `cn.js` manages a single global connection
+
+### Revised Approach: Multi-Window Sessions (like VS Code)
+
+Instead of tabs, implement proper multi-window sessions where each window:
+- Is a separate BrowserWindow in the same Electron process
+- Has its own TCP connection to an interpreter
+- Maintains independent state
+- Shares the main process but has isolated renderer processes
+
+### 4.1 Connection Architecture Refactoring (Week 8)
+
+#### Remove Global Connection State:
+1. **Encapsulate Connection in IDE Class**
+   ```javascript
+   // Each IDE instance owns its connection
+   class IDE {
+     constructor(opts) {
+       this.connection = null;  // TCP socket
+       this.sessionId = opts.sessionId;
+       this.messageQueue = [];
+       this.protocolState = {};
+     }
+     
+     connect(host, port) {
+       this.connection = net.connect({ host, port });
+       this.setupMessageHandling();
+     }
+     
+     send(cmd, args) {
+       // Send on this IDE's connection
+       if (this.connection) {
+         const msg = JSON.stringify([cmd, args]);
+         this.connection.write(toBuf(msg));
+       }
+     }
+     
+     setupMessageHandling() {
+       this.connection.on('data', (data) => {
+         // Process messages for this IDE only
+         this.processMessage(data);
+       });
+     }
+   }
+   ```
+
+2. **Remove Global Variables**
+   - Remove global `clt` (client connection)
+   - Remove global `D.send` function
+   - Make `D.recv` per-IDE instance
+   - Move connection state from `cn.js` globals to IDE instance
+
+3. **Update Protocol Handlers**
+   - Pass IDE instance to all protocol handlers
+   - Replace `D.send` with `ide.send`
+   - Update all files that use global connection
+
+### 4.2 Window Management Architecture (Week 9)
+
+#### Main Process Window Manager:
+```javascript
+// main.js - Window manager for session windows
+class SessionWindowManager {
+  constructor() {
+    this.windows = new Map(); // windowId -> { window, sessionId }
+  }
+  
+  createSessionWindow(sessionId) {
+    const window = new BrowserWindow({
+      width: 1200,
+      height: 800,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+    
+    // Load with session context
+    window.loadFile('index.html');
+    window.webContents.once('did-finish-load', () => {
+      window.webContents.send('init-session', { sessionId });
+    });
+    
+    this.windows.set(window.id, { window, sessionId });
+    return window;
+  }
+}
+```
+
+#### Renderer Process Initialization:
+```javascript
+// Each window creates its own IDE instance
+ipcRenderer.on('init-session', (event, { sessionId }) => {
+  const ide = new D.IDE({ sessionId });
+  // This window's IDE, not global
+  D.ide = ide;
+});
+```
+
+### 4.3 NSW Command Implementation (Week 10)
+
+1. **NSW triggers new window creation**:
+   ```javascript
+   NSW() {
+     if (D.el) {
+       ipcRenderer.send('create-session-window');
+     }
+   }
+   ```
+
+2. **Main process creates window**:
+   ```javascript
+   ipcMain.on('create-session-window', () => {
+     const sessionId = `session_${Date.now()}`;
+     const window = sessionWindowManager.createSessionWindow(sessionId);
+   });
+   ```
+
+3. **New window shows connection dialog**:
+   - Each window starts with connection dialog
+   - Establishes its own interpreter connection
+   - Independent of other windows
+
+### 4.4 Implementation Order
+
+1. **Phase 4.1: Connection Refactoring**
+   - Create connection wrapper class
+   - Move global connection state to IDE instance
+   - Update all `D.send` calls to use IDE instance
+   - Test single window still works
+
+2. **Phase 4.2: Multi-Window Support**
+   - Implement SessionWindowManager in main process
+   - Update window creation flow
+   - Ensure each window has isolated state
+   - Test multiple windows can run independently
+
+3. **Phase 4.3: Polish**
+   - Window menu showing all sessions
+   - Proper window titles with connection info
+   - Clean shutdown of connections on window close
+   - Keyboard shortcuts for window management
+
+### Key Differences from Original Plan
+
+1. **Windows not Tabs**: Each session is a separate window (like VS Code)
+2. **Connection per Window**: Each window has its own TCP connection
+3. **Process Isolation**: Windows are isolated at the renderer process level
+4. **Simpler Architecture**: No complex message routing between tabs
+
+### Success Criteria
+
+- [x] Can open multiple session windows with File â†’ New Session
+- [x] Each window can connect to a different interpreter
+- [x] Windows operate independently (commands in one don't affect others)
+- [ ] Closing a window cleanly disconnects its interpreter
+- [ ] Window menu shows all open sessions
+- [x] No global connection state
+
+### Phase 4 Implementation Findings
+
+#### Completed Successfully:
+1. **Connection Class Architecture**
+   - Created `src/connection.js` encapsulating TCP connection per IDE
+   - Fixed handshake protocol to wait for server responses
+   - Each IDE instance owns its connection, no global state
+   
+2. **Multi-Window Support**
+   - CMD+N creates new Electron windows via IPC
+   - Windows start with connection dialog (400x400)
+   - Each window has independent IDE instance
+   - Fixed focus stealing issues
+
+3. **Connection Handshake Fix**
+   - Proper sequence: Client sends SupportedProtocols, waits for response
+   - Then sends UsingProtocol=2, waits for confirmation
+   - Only then sends Identify, Connect, GetWindowLayout
+
+#### Remaining Issues:
+1. **Menu Focus Synchronization**
+   - Menus update correctly when switching TO session window
+   - Menus don't update when switching BACK to connection window
+   - Root cause: Window still has D.ide instance even when showing connection dialog
+   - Attempted fix: Check `I.cn.hidden` state, but no change observed
+
+2. **Window Lifecycle**
+   - Need proper cleanup when windows close
+   - Connection cleanup exists but needs testing
+   - Window tracking in WindowManager implemented but menu update incomplete
+
+3. **Memory Leaks**
+   - Connection class has cleanup (removeAllListeners)
+   - Not fully tested under stress
+
+#### Key Code Changes:
+- `src/connection.js`: New file encapsulating TCP connection
+- `src/km.js`: CNC command always creates new window
+- `main.js`: IPC handler creates windows with proper query params
+- `src/init.js`: Handles new session windows differently
+- `src/ide.js`: Each IDE owns a Connection instance
+- `src/cn.js`: Creates IDE instances with connections
+
+#### Next Steps:
+1. Fix menu synchronization by properly tracking window state
+2. Implement window close handlers for clean disconnection
+3. Complete WindowManager menu update functionality
+4. Stress test for memory leaks
 
 ## Phase 5: Platform-Specific Fixes
 

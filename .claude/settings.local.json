@@ -21,7 +21,11 @@
       "Bash(log show:*)",
       "Bash(npm run clean:*)",
       "Bash(pkill:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(npm run dev:*)",
+      "Bash(npm start)",
+      "Bash(./mk c)",
+      "Bash(./mk:*)"
     ],
     "deny": []
   }

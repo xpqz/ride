@@ -445,7 +445,7 @@ D.Ed.prototype = {
       if (ed.filename) ed.container.tab.titleElement[0].title = ed.filename;
     }
     const docTitle = `${ed.isModified ? '⬤ ' : ''}${ed.title}${filename} - ${ed.ide.caption}`;
-    D.ENABLE_FLOATING_MODE && D.ide.floating && $('title', ed.dom.ownerDocument).text(docTitle);
+    // Floating mode removed - no document title update needed
     ed.container.tab.closeElement.toggleClass('modified', ed.isModified);
   },
   blockCursor(x) { this.me.updateOptions({ cursorStyle: x ? 'block' : 'line' }); },
@@ -462,11 +462,9 @@ D.Ed.prototype = {
       p.setActiveContentItem && p.setActiveContentItem(q);
       q = p; p = p.parent;
     } // reveal in golden layout
-    if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
-      ed.updateTitle();
-      D.el.getCurrentWindow().focus();
-    }
-    window.focused || window.focus();
+    // Floating mode removed - no special window focus needed
+    // Don't force window focus in multi-window setup
+    // window.focused || window.focus();
     ed.me.focus();
     ed.ide.setCursorPosition(ed.me.getPosition(), ed.me.getModel().getLineCount());
   },
@@ -484,12 +482,7 @@ D.Ed.prototype = {
     }
   },
   close() {
-    if (D.ENABLE_FLOATING_MODE && D.ide.floating) {
-      this.me.getModel().dispose();
-      delete D.ide.wins[this.id];
-      this.container && this.container.close();
-      !D.ide.gl.root.contentItems.length && D.el.getCurrentWindow().hide();
-    }
+    // Floating mode removed - close() handled by CloseWindow handler
   },
   prompt(x) {
     this.setRO(this.tc || !x);

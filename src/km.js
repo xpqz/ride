@@ -80,19 +80,27 @@
     },
     CAW() { D.send('CloseAllWindows', {}); },
     CNC() {
-      const p = D.el.process.argv; // if(D.mac)p=p.replace(/(\/Contents\/).*$/,'$1MacOS/nwjs')
-      nodeRequire('child_process').spawn(p[0], p.slice(1), {
-        detached: true,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        env: {
-          ...process.env,
-          RIDE_CONNECT: '',
-          RIDE_SPAWN: '',
-          DYALOG_SPAWN: '',
-          RIDE_AUTO_START: 0,
-        },
-      });
-      if (D.ide.dead) window.close();
+      // Create a new window in the same process - ALWAYS create a new window
+      if (!D.el) return;
+      
+      console.log('RIDE: CNC command called - always creating new window');
+      
+      try {
+        const { ipcRenderer } = nodeRequire('electron');
+        console.log('RIDE: Sending create-session-window IPC message');
+        ipcRenderer.send('create-session-window');
+        console.log('RIDE: IPC message sent');
+      } catch (e) {
+        console.error('RIDE: Error sending IPC:', e);
+      }
+    },
+    NSW() {
+      // New Session Window - creates a new session window
+      if (!D.el) return;
+      
+      console.log('RIDE: NSW - Creating new session window');
+      const { ipcRenderer } = nodeRequire('electron');
+      ipcRenderer.send('create-session-window');
     },
     CNNW() { D.configNew(); },
     CNCL() { D.configClone(); },
@@ -161,7 +169,17 @@
     },
     DK(me) { me.trigger('editor', 'editor.action.deleteLines'); },
     QCP(me) { me.trigger('editor', 'editor.action.quickCommand'); },
-    QIT() { D.quit(); },
+    QIT() { 
+      console.log('RIDE: QIT command called');
+      if (D.el) {
+        // For Electron, use app.quit()
+        const { app } = nodeRequire('@electron/remote');
+        app.quit();
+      } else {
+        // For browser, use window.close()
+        D.quit();
+      }
+    },
     ASW: D.prf.autoStatus.toggle,
     LBR: D.prf.lbar.toggle,
     SBR: D.prf.sbar.toggle,
@@ -338,21 +356,32 @@
   const defCmd = (x) => {
     const c = D.commands;
     c[x] || (c[x] = (me) => {
-        if (x === 'ER') console.log('RIDE: ER command triggered via defCmd, me:', me, 'dyalogCmds:', me.dyalogCmds);
-        // Get the currently focused window instead of using the captured me
-        const fw = D.ide && D.ide.focusedWin;
+        if (x === 'ER') console.log('RIDE: ER command triggered via defCmd');
+        
+        // Check if we have an IDE instance
+        if (!D.ide) {
+          console.error('RIDE: No IDE instance available for command', x);
+          return;
+        }
+        
+        // Get the currently focused window
+        const fw = D.ide.focusedWin;
         if (fw && fw[x]) {
           console.log('RIDE: Using focusedWin for command', x, 'window:', fw.constructor.name, 'id:', fw.id);
           fw.execCommand(x);
-        } else {
-          // Fallback to original behavior
+        } else if (me && me.dyalogCmds) {
+          // Fallback to editor's command handler
           const h = me.dyalogCmds;
           if (h && h[x]) {
+            console.log('RIDE: Using editor dyalogCmds for command', x);
             h.execCommand(x);
           } else {
-            console.error('RIDE: Command', x, 'not found. focusedWin:', fw, 'dyalogCmds:', h);
+            console.error('RIDE: Command', x, 'not found in editor. dyalogCmds:', h);
             $.alert(`Command ${x} not implemented.`);
           }
+        } else {
+          console.error('RIDE: Command', x, 'not available. No focusedWin or editor context.');
+          $.alert(`Command ${x} not available.`);
         }
     });
   };

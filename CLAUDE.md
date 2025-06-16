@@ -80,6 +80,8 @@ The custom build script `mk` supports multiple platforms:
 
 Use latest Node.js version (v23.8.0 or newer) for building.
 
+**NOTE:** Always do a `./mk c`, followed by a `./mk oa` for every build!
+
 ## Testing
 
 Tests use AVA framework. Run with `npm test`. Tests are in `/test` directory.

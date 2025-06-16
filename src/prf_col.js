@@ -234,9 +234,20 @@
     });
     monaco.editor.setTheme(name);
     if (D.el) {
-      nodeRequire('@electron/remote').getGlobal('winstate').theme = schema.theme;
+      try {
+        const remote = nodeRequire('@electron/remote');
+        const winstate = remote && remote.getGlobal && remote.getGlobal('winstate');
+        if (winstate) {
+          winstate.theme = schema.theme;
+        }
+      } catch (e) {
+        console.log('RIDE: Could not update global winstate theme:', e);
+      }
     }
   };
+  // Export setMonacoTheme globally so it can be called when Monaco is ready
+  D.setMonacoTheme = setMonacoTheme;
+  
   const updStl = () => { // update global style from what's in prefs.json
     const s = D.prf.colourScheme();
     const a = SCMS.concat(D.prf.colourSchemes().map(decScm));
@@ -248,7 +259,12 @@
         D.theme = schema.theme;
         // IPC removed - theme broadcast no longer needed
         I.col_stl && (I.col_stl.textContent = renderCSS(schema));
-        if (window.monaco) setMonacoTheme(schema);
+        if (window.monaco && window.monaco.editor) {
+          setMonacoTheme(schema);
+        } else {
+          // Store the schema to apply when Monaco is ready
+          D.pendingMonacoTheme = schema;
+        }
         break;
       }
     }

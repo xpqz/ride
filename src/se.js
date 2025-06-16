@@ -585,8 +585,9 @@ D.Se.prototype = {
     while (p) {
       p.setActiveContentItem && p.setActiveContentItem(q); q = p; p = p.parent;
     } // reveal in golden layout
-    D.elw && D.elw.focus();
-    window.focused || window.focus();
+    // Don't focus global window in multi-window setup
+    // D.elw && D.elw.focus();
+    // window.focused || window.focus();
     console.log('RIDE: Se.focus() - calling me.focus(), hasTextFocus:', this.me.hasTextFocus());
     this.me.focus();
     console.log('RIDE: Se.focus() - after me.focus(), hasTextFocus:', this.me.hasTextFocus());
