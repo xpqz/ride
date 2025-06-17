@@ -3,7 +3,7 @@
 <head>
   <title></title>
   <meta charset=utf-8>
-  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' blob:; worker-src 'self' blob:">
   <link rel=stylesheet href='style/bootstrap.css'>
   <link rel=stylesheet href='style/goldenlayout-base.css'>
   <link rel=stylesheet class=theme href='style/ride-base.css'>
@@ -859,20 +859,76 @@
     if(typeof exp !== 'undefined') { exports = exp; delete exp; }
   </script>
   
-<script src="node_modules/monaco-editor/min/vs/loader.js"></script>
+<!-- Monaco Editor loader fix for Electron with nodeIntegration -->
 <script>
-  // Save Monaco's amd require and restore Node's require
-  var amdRequire = require;
-  if(typeof nodeRequire !== 'undefined') require = nodeRequire;
+  // Save Node's require before Monaco loader overwrites it
+  var nodeRequire = typeof require !== 'undefined' ? require : undefined;
+  var nodeModule = typeof module !== 'undefined' ? module : undefined;
+  var nodeExports = typeof exports !== 'undefined' ? exports : undefined;
+  var nodeDefine = typeof define !== 'undefined' ? define : undefined;
 </script>
+
+<script src="node_modules/monaco-editor/min/vs/loader.js"></script>
+
 <script>
-  let dir = typeof __dirname !== 'undefined' ? `${__dirname}/` : '';
+  // Monaco's loader is now available as 'require'
+  // Save it as amdRequire and restore Node's require
+  var amdRequire = require;
+  var amdDefine = define;
+  
+  // Restore Node's globals
+  if (typeof nodeRequire !== 'undefined') {
+    require = nodeRequire;
+    module = nodeModule;
+    exports = nodeExports;
+    if (nodeDefine) define = nodeDefine;
+  }
+  
+  // Configure Monaco's AMD loader
+  let baseUrl = '';
+  if (typeof __dirname !== 'undefined') {
+    // For Electron with file:// protocol
+    let dir = __dirname.replace(/\\/g, '/');
+    if (!dir.endsWith('/')) dir += '/';
+    // Use file:// protocol explicitly and encode the path
+    baseUrl = 'file:///' + encodeURI(dir.replace(/^\//, '')) + 'node_modules/monaco-editor/min';
+  } else {
+    // For web browsers
+    baseUrl = 'node_modules/monaco-editor/min';
+  }
+  
+  console.log('Monaco baseUrl:', baseUrl);
+  
   amdRequire.config({
-    baseUrl: dir + 'node_modules/monaco-editor/min'
+    baseUrl: baseUrl,
+    paths: {
+      'vs': 'vs'
+    },
+    // This is critical for Electron with file:// protocol
+    'vs/nls': {
+      availableLanguages: {
+        '*': 'en'
+      }
+    },
+    // Keep reference to Node's require
+    nodeRequire: nodeRequire,
+    // Handle errors
+    onError: function(err) {
+      console.error('Monaco loader error:', err);
+      if (err.requireModules) {
+        console.error('Failed modules:', err.requireModules);
+      }
+      if (err.requireType) {
+        console.error('Require type:', err.requireType);
+      }
+    },
+    // Try to use script tags instead of XHR for file:// protocol
+    preferScriptTags: true
   });
     
+  // Monaco-specific workarounds
   self.module = undefined;
-  self.process && (self.process.browser = true);
+  self.process.browser = true;
 </script>
 
 
@@ -909,8 +965,9 @@
 <script src=src/se.js         ></script>
 <script src=src/bq.js         ></script>
 <script src=src/km.js         ></script>
+<script src=src/connection.js ></script>
 <script src=src/ide.js        ></script>
-<script src=src/ipc.js        ></script>
+<!-- IPC system removed -->
 <script src=src/mon_apl.js    ></script>
 <script src=src/init.js       ></script>
 

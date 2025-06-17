@@ -66,6 +66,7 @@
     D.tmr && clearTimeout(D.tmr);
     delete D.tmr;
     hideDlgs();
+    connecting = false; // Reset connecting flag on error
     const [e] = x;
     if (!(e instanceof Error)) {
       $.err(...x);
@@ -143,16 +144,24 @@
         });
       } else if (process.platform === 'darwin') {
         const rd = '/Applications';
-        ls(rd).forEach((x) => {
+        console.log('RIDE: Scanning for Dyalog installations in', rd);
+        const files = ls(rd);
+        console.log('RIDE: Found', files.filter(x => x.includes('Dyalog')).length, 'Dyalog-related entries');
+        files.forEach((x) => {
           const n = /^Dyalog-(\d+\.\d+)\.app$/.exec(x);
-          const exe = `${rd}/${x}/Contents/Resources/Dyalog/mapl`;
-          n && fs.existsSync(exe) && interpreters.push({
-            exe,
-            ver: parseVer(n[1]),
-            bits: 64,
-            edition: 'unicode',
-            opt: '',
-          });
+          if (n) {
+            const exe = `${rd}/${x}/Contents/Resources/Dyalog/mapl`;
+            console.log('RIDE: Checking', x, '- exe exists:', fs.existsSync(exe));
+            if (fs.existsSync(exe)) {
+              interpreters.push({
+                exe,
+                ver: parseVer(n[1]),
+                bits: 64,
+                edition: 'unicode',
+                opt: '',
+              });
+            }
+          }
         });
       } else {
         const rd = '/opt/mdyalog';
@@ -319,7 +328,8 @@
     }
     return 1;
   };
-  const initInterpreterConn = () => {
+  // DEPRECATED: Connection handling moved to Connection class
+  const initInterpreterConn_DEPRECATED = () => {
     hideDlgs();
     nodeRequire('electron').ipcRenderer.send('save-win', false);
     let b = Buffer.alloc(0x100000);
@@ -356,6 +366,16 @@
         } else if (/^UsingProtocol=/.test(m)) {
           if (m.slice(m.indexOf('=') + 1) === '2') {
             handshakeDone = true;
+            // Clear the connection timeout - connection successful
+            console.log('RIDE: Handshake done at', new Date().toISOString(), 'D.tmr exists:', !!D.tmr);
+            if (D.tmr) {
+              clearTimeout(D.tmr);
+              delete D.tmr;
+              console.log('RIDE: Connection timeout cleared successfully in handshake');
+            } else {
+              console.error('RIDE: WARNING - No timeout to clear in handshake!');
+            }
+            // Connection class will set connected flag via handleConnectionOpen
           } else {
             err('Unsupported Ride protocol version');
             break;
@@ -403,8 +423,13 @@
       c.on('ready', () => { c.exec(cmd, { pty: { term: 'xterm' } }, f); })
         .on('tcp connection', (_, acc) => {
           clt = acc();
-          initInterpreterConn();
-          new D.IDE().setConnInfo(o.host, 'SSH', sel ? sel.name : '');
+          // Create IDE and use its connection
+          D.ide = createIDEInstance(o.host, 'SSH', sel ? sel.name : '');
+          D.ide.connection.socket = clt;
+          D.ide.connection.connected = true;
+          D.ide.connection.setupHandlers();
+          D.ide.connected = 1;
+          console.log('RIDE: Set D.ide.connected = 1 (SSH)');
         })
         .on('keyboard-interactive', (_, _1, _2, _3, fin) => { fin([x.pass]); })
         .on('error', err)
@@ -417,21 +442,30 @@
     }
     return null;
   };
-  const ct = process.env.RIDE_CONNECT_TIMEOUT || 60000;
-  const cancelOp = (c) => {
-    const cancel = (e) => {
+  const ct = process.env.RIDE_CONNECT_TIMEOUT || 60000; // 60 seconds default timeout
+  const cancelOp = (c, customCancel) => {
+    const cancel = customCancel || ((e) => {
       if (e) {
+        console.log('RIDE: Cancel operation called manually');
         clearTimeout(D.tmr);
         delete D.tmr;
       } else {
+        console.error('RIDE: Connection timed out after', ct, 'ms');
+        console.error('RIDE: Stack trace:', new Error().stack);
         err('Timed out');
       }
       c && c.end();
       hideDlgs();
       return !1;
-    };
-    D.tmr = setTimeout(cancel, ct);
-    q.connecting_dlg_close.onclick = cancel;
+    });
+    console.log('RIDE: Setting connection timeout for', ct, 'ms at', new Date().toISOString());
+    console.log('RIDE: Caller stack:', new Error().stack);
+    if (D.tmr) {
+      console.warn('RIDE: WARNING - Timeout already exists, clearing old one first');
+      clearTimeout(D.tmr);
+    }
+    D.tmr = setTimeout(() => cancel(false), ct);
+    q.connecting_dlg_close.onclick = () => cancel(true);
   };
   const connect = (x) => {
     let m = net; // m:module used to create connection
@@ -456,31 +490,57 @@
         };
       } catch (e) { err(e.message); return; }
     }
-    clt = m.connect(o, () => {
-      initInterpreterConn();
-      new D.IDE().setConnInfo(x.host, x.port, sel ? sel.name : '');
+    // Create IDE instance first
+    D.ide = createIDEInstance(x.host, x.port, sel ? sel.name : '');
+    
+    // Use the IDE's connection
+    const sock = D.ide.connection.connect(x.host, x.port);
+    
+    // Handle connection timeout
+    sock.on('connect', () => {
+      log(`connected to ${x.host}:${x.port}`);
+      if (D.tmr) {
+        console.log('RIDE: Socket connected, clearing timeout');
+        clearTimeout(D.tmr);
+        delete D.tmr;
+      }
     });
-    clt.on('error', (e) => {
+    
+    sock.on('error', (e) => {
       log(`connect failed: ${e}`);
-      if (D.tmr && D.ide && e.code === 'ECONNABORTED') {
-        err('The interpreter is already serving another Ride client.', 'Connection closed by interpreter');
-        D.ide.die();
-        D.commands.CNC();
-      } else err(e);
-      clt = 0;
+      err(e.message);
     });
-    cancelOp(clt);
-    // net module needs a nudge to connect properly
-    // see https://github.com/Dyalog/ride/issues/387
-    D.ipc.server.broadcast('nudge');
+    
+    // Keep reference for backward compatibility
+    clt = sock;
+    
+    cancelOp(sock);
+    // IPC removed - nudge no longer needed
   };
 
+  let connecting = false; // Flag to prevent multiple connection attempts
+  
   const go = (conf) => { // "Go" buttons in the favs or the "Go" button at the bottom
+    if (connecting) {
+      console.log('RIDE: Connection already in progress, ignoring click');
+      return 0;
+    }
+    
     const x = conf || sel;
     if (!validate(x)) return 0;
     D.prf.defaultConfig(x.name);
     protocolLogFile = x.log;
     D.spawned = 0;
+    connecting = true;
+    
+    // Reset connecting flag after a delay in case something goes wrong
+    setTimeout(() => {
+      if (connecting) {
+        console.log('RIDE: Resetting connecting flag after timeout');
+        connecting = false;
+      }
+    }, 5000);
+    
     try {
       switch (x.type || 'connect') {
         case 'connect':
@@ -506,8 +566,11 @@
                   return;
                 }
                 clt = client;
-                initInterpreterConn();
-                new D.IDE().setConnInfo(x.host, x.port, sel ? sel.name : '');
+                // Create IDE and use its connection
+                D.ide = createIDEInstance(x.host, x.port, sel ? sel.name : '');
+                D.ide.connection.socket = clt;
+                D.ide.connection.connected = true;
+                D.ide.connection.setupHandlers();
                 clt.on('error', (ce) => {
                   log(`connect failed: ${ce}`);
                   clt = 0;
@@ -563,8 +626,11 @@
               });
             }
             clt = c;
-            initInterpreterConn();
-            new D.IDE().setConnInfo(cHost, port, sel ? sel.name : '');
+            // Create IDE and use its connection
+            D.ide = createIDEInstance(cHost, port, sel ? sel.name : '');
+            D.ide.connection.socket = clt;
+            D.ide.connection.connected = true;
+            D.ide.connection.setupHandlers();
           });
           srv.on('error', (e) => {
             srv = 0;
@@ -576,7 +642,7 @@
             q.listen_dlg_host.textContent = o.address !== '::' ? o.address : 'host';
             q.listen_dlg_port.textContent = `${o.port}`;
           });
-          D.ipc.server.broadcast('nudge');
+          // IPC removed - nudge broadcast no longer needed
           break;
         }
         case 'start': {
@@ -658,15 +724,25 @@
               }
             };
             const cancel = (e) => {
+              console.log('RIDE: Cancel called in spawn handler, e:', !!e, 'D.tmr:', !!D.tmr, 'at', new Date().toISOString());
               if (e) {
                 clearTimeout(D.tmr);
                 delete D.tmr;
               } else {
+                // Check if we're already connected before killing the process
+                if (D.ide && D.ide.connected) {
+                  console.error('RIDE: WARNING - Timeout fired but already connected! Ignoring.');
+                  clearTimeout(D.tmr);
+                  delete D.tmr;
+                  return !1;
+                }
+                console.error('RIDE: Spawn timeout fired! Stack:', new Error().stack);
                 err('Timed out');
               }
               srv && srv.close();
               srv = 0;
-              if (child) {
+              if (child && !D.ide?.connected) {
+                console.log('RIDE: Killing child process due to timeout');
                 child.off('exit', onExit);
                 child.off('error', onError);
                 child.kill();
@@ -681,9 +757,23 @@
               srv && srv.close();
               srv = 0;
               clt = y;
-              initInterpreterConn();
-              new D.IDE().setConnInfo(adr.address, adr.port, sel ? sel.name : '');
-              D.lastSpawnedExe = x.exe;
+              try {
+                console.log('RIDE: Creating IDE instance for spawned interpreter');
+                D.ide = createIDEInstance(adr.address, adr.port, sel ? sel.name : '');
+                
+                // Set up the connection with the spawned interpreter's socket
+                D.ide.connection.socket = y;
+                D.ide.connection.connected = true;
+                D.ide.connection.setupHandlers();
+                
+                D.lastSpawnedExe = x.exe;
+                
+                // Keep reference for backward compatibility
+                clt = y;
+              } catch (ideError) {
+                console.error('RIDE: Failed to create IDE:', ideError);
+                toastr.error('Failed to initialize IDE: ' + ideError.message);
+              }
             });
             srv.on('error', (e) => {
               log(`listen failed: ${e}`);
@@ -723,8 +813,7 @@
               child.on('exit', onExit);
               child.on('error', onError);
             });
-            D.tmr = setTimeout(cancel, ct);
-            q && (q.connecting_dlg_close.onclick = cancel);
+            cancelOp(null, cancel); // Use cancelOp with custom cancel function for spawn
           }
           break;
         }
@@ -734,7 +823,7 @@
     return !1;
   };
   global.go = go;
-  const setUpMenu = () => {
+  const setUpMenu = D.setUpMenu = () => {
     D.InitHelp();
     const m = 'Ride'
     + '\n  About Ride=ABT'
@@ -772,23 +861,135 @@
     + '\n  &Third Party Licences    =TPL';
     D.installMenu(D.parseMenuDSL(m));
   };
-  D.cn = () => { // set up Connect page
-    q = J.cn;
-    I.cn.hidden = 0;
-    const winstate = D.el.getGlobal('winstate');
-    $(I.cn).splitter().on('splitter-resize', () => {
-      winstate.launchWin.width = q.lhs.offsetWidth;
-    });
-    setTimeout(setUpMenu, 100);
-    D.conns = [];
-    if (fs.existsSync(cnFile)) {
-      D.conns.push(...JSON.parse(fs.readFileSync(cnFile).toString()));
-      D.conns_modified = +fs.statSync(cnFile).mtime;
+  // Define winstate at module level so it's accessible throughout cn.js
+  let winstate;
+  
+  // Helper function to create IDE with multi-session support
+  const createIDEInstance = (host, port, name) => {
+    // Each window gets its own session
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const connectionInfo = name || `${host}:${port}`;
+    
+    console.log('RIDE: Creating IDE for', connectionInfo, 'with sessionId:', sessionId);
+    
+    // Create IDE instance for this window
+    const ide = new D.IDE({ sessionId });
+    ide.setConnInfo(host, port, name);
+    
+    // Set as the global IDE for this window
+    D.ide = ide;
+    
+    // Update window title to show connection
+    if (D.el && D.elw) {
+      D.elw.setTitle(`Ride - ${connectionInfo}`);
+    }
+    
+    // Hide dialogs when IDE is created
+    hideDlgs();
+    connecting = false; // Reset connecting flag on success
+    
+    // Simple IPC to notify connection established
+    if (D.el) {
+      try {
+        nodeRequire('electron').ipcRenderer.send('window-state-change', { hasConnection: true });
+      } catch (e) {
+        console.error('Failed to send IPC:', e);
+      }
+    }
+    
+    // Save window state
+    nodeRequire('electron').ipcRenderer.send('save-win', false);
+    
+    return ide;
+  };
+  
+  D.cn = (opts = {}) => { // set up Connect page
+    console.log('RIDE: D.cn() called - setting up Connect page', opts);
+    D.cnOpts = opts; // Store options for use in go()
+    try {
+      console.log('RIDE: Setting q = J.cn');
+      q = J.cn;
+      if (!q) {
+        console.error('RIDE: J.cn is undefined!');
+        return;
+      }
+      
+      console.log('RIDE: Making connection dialog visible');
+      I.cn.hidden = 0;
+      
+      // Update menu when showing connection dialog
+      if (D.setUpMenu) {
+        console.log('RIDE: Updating menu for connection dialog');
+        D.setUpMenu();
+      }
+      
+      // Simple IPC to notify showing connection dialog
+      if (D.el) {
+        try {
+          nodeRequire('electron').ipcRenderer.send('window-state-change', { hasConnection: false });
+        } catch (e) {
+          console.error('Failed to send IPC:', e);
+        }
+      }
+      
+      console.log('RIDE: Getting winstate');
+      winstate = D.el.getGlobal('winstate');
+      if (!winstate) {
+        console.warn('RIDE: winstate not found, creating default');
+        // Create a minimal winstate for non-floating mode
+        winstate = {
+          dx: 0,
+          launchWin: {
+            width: 400,
+            expandedWidth: 885,
+            expanded: false
+          }
+        };
+      }
+      
+      console.log('RIDE: Setting up splitter');
+      try {
+        $(I.cn).splitter().on('splitter-resize', () => {
+          if (winstate && winstate.launchWin) {
+            winstate.launchWin.width = q.lhs.offsetWidth;
+          }
+        });
+      } catch (splitterErr) {
+        console.error('RIDE: Splitter error:', splitterErr);
+        // Continue anyway - splitter is not critical
+      }
+      
+      console.log('RIDE: Setting up menu');
+      setTimeout(setUpMenu, 100);
+      
+      console.log('RIDE: Loading connections from', cnFile);
+      D.conns = [];
+      if (fs.existsSync(cnFile)) {
+        const fileContent = fs.readFileSync(cnFile).toString();
+        const parsed = JSON.parse(fileContent);
+        console.log('RIDE: Loaded', parsed.length, 'connections from file');
+        D.conns.push(...parsed);
+        D.conns_modified = +fs.statSync(cnFile).mtime;
+      } else {
+        console.log('RIDE: No connections file found');
+      }
+    } catch (e) {
+      console.error('RIDE: Error in D.cn():', e);
+      console.error('RIDE: Stack trace:', e.stack);
+      // Don't throw - try to continue
     }
     getLocalInterpreters();
+    console.log('RIDE: Found', interpreters.length, 'local interpreters');
     const hasCreated = createPresets();
-    if (!D.conns.length) D.conns.push({ type: 'connect' });
-    D.conns.forEach((x) => { q.favs.appendChild(favDOM(x)); });
+    console.log('RIDE: Created presets:', hasCreated, 'Total connections:', D.conns.length);
+    if (!D.conns.length) {
+      console.log('RIDE: No connections, adding default');
+      D.conns.push({ type: 'connect' });
+    }
+    D.conns.forEach((x, i) => {
+      console.log('RIDE: Adding connection', i, ':', x.name || x.type);
+      q.favs.appendChild(favDOM(x));
+    });
     if (hasCreated) save();
     I.cn.onkeyup = (x) => {
       const k = D.util.fmtKey(x);
@@ -975,6 +1176,13 @@
     // };
     const toggleConfig = (show) => {
       const expanded = (show === undefined) ? !$(q.rhs).is(':visible') : !!show;
+      
+      // Handle case where winstate might not be initialized
+      if (!winstate) {
+        console.warn('RIDE: winstate not initialized in toggleConfig');
+        return;
+      }
+      
       const { height } = D.elw.getContentBounds();
       const newWidth = expanded ? winstate.launchWin.expandedWidth : winstate.launchWin.width;
       winstate.launchWin.expanded = expanded;
@@ -982,9 +1190,17 @@
       D.elw.setMinimumSize(minwidth, 400);
       D.elw.setContentSize(newWidth, height);
       setTimeout(() => { I.cn.toggleMaximize(expanded ? winstate.launchWin.width : 0); }, 10);
-      nodeRequire('electron').ipcRenderer.send('save-win', true);
+      
+      // Only send IPC if available
+      if (nodeRequire && nodeRequire('electron').ipcRenderer) {
+        nodeRequire('electron').ipcRenderer.send('save-win', true);
+      }
     };
-    toggleConfig(winstate.launchWin.expanded);
+    
+    // Only call toggleConfig if winstate is available
+    if (winstate && winstate.launchWin) {
+      toggleConfig(winstate.launchWin.expanded);
+    }
     $(q.favs).list().sortable({
       cursor: 'move',
       revert: true,
@@ -1112,6 +1328,10 @@
     });
     updExes();
     document.title = 'New Session - Ride';
+    
+    // Check if this is a new session window to skip auto-start
+    const skipAutoStart = opts.isNewSession || (D.el && window.location.search.includes('newSession=true'));
+    
     const conf = D.el.process.env.RIDE_CONF;
     if (conf) {
       const i = [...q.favs.children].findIndex((x) => x.cnData.name === conf);
@@ -1119,11 +1339,18 @@
       else {
         setTimeout(() => {
           $(q.favs).list('select', i);
-          q.go.click();
+          if (!skipAutoStart) q.go.click();
         }, 1);
         return;
       }
     }
+    
+    // Skip auto-start for new session windows
+    if (skipAutoStart) {
+      console.log('RIDE: Skipping auto-start for new session window');
+      return;
+    }
+    
     const autoStart = process.env.RIDE_AUTO_START ? process.env.RIDE_AUTO_START === '1' : D.prf.autoStart();
     let i = 0;
     if (!autoStart) {
@@ -1147,10 +1374,25 @@
     save();
   };
   module.exports = () => {
+    // Keep global D.send for backward compatibility
+    // It will forward to the active IDE's send method
     D.send = (x, y) => {
-      if (D.ide && !D.ide.promptType
-        && !/Interrupt$|TreeList|Reply|FormatCode|GetAutocomplete|SaveChanges|CloseWindow|Exit|SetPW/.test(x)) return;
-      sendEach([JSON.stringify([x, y])]);
+      if (D.ide && D.ide.connection) {
+        // Use the active IDE's send method
+        D.ide.send(x, y);
+      } else {
+        // During initial connection, we shouldn't need to send
+        console.warn('D.send called without active IDE:', x);
+      }
+    };
+    
+    // Set up global recv to forward to IDE
+    D.recv = (x, y) => {
+      if (D.ide) {
+        D.ide.recv(x, y);
+      } else {
+        console.warn('D.recv called without active IDE:', x);
+      }
     };
     const a = rq('@electron/remote').process.argv;
     const { env } = D.el.process;

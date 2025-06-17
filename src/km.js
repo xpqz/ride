@@ -72,8 +72,7 @@
     UND(me) { me.trigger('D', 'undo'); },
     PRF() { D.prf_ui(); },
     ABT() {
-      if (D.el && D.ide && D.ide.floating) D.ipc.of.ride_master.emit('ABT');
-      else D.abt();
+      D.abt();
     },
     CAM() {
       D.send('ClearTraceStopMonitor', { token: 0 });
@@ -81,19 +80,27 @@
     },
     CAW() { D.send('CloseAllWindows', {}); },
     CNC() {
-      const p = D.el.process.argv; // if(D.mac)p=p.replace(/(\/Contents\/).*$/,'$1MacOS/nwjs')
-      nodeRequire('child_process').spawn(p[0], p.slice(1), {
-        detached: true,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        env: {
-          ...process.env,
-          RIDE_CONNECT: '',
-          RIDE_SPAWN: '',
-          DYALOG_SPAWN: '',
-          RIDE_AUTO_START: 0,
-        },
-      });
-      if (D.ide.dead) window.close();
+      // Create a new window in the same process - ALWAYS create a new window
+      if (!D.el) return;
+      
+      console.log('RIDE: CNC command called - always creating new window');
+      
+      try {
+        const { ipcRenderer } = nodeRequire('electron');
+        console.log('RIDE: Sending create-session-window IPC message');
+        ipcRenderer.send('create-session-window');
+        console.log('RIDE: IPC message sent');
+      } catch (e) {
+        console.error('RIDE: Error sending IPC:', e);
+      }
+    },
+    NSW() {
+      // New Session Window - creates a new session window
+      if (!D.el) return;
+      
+      console.log('RIDE: NSW - Creating new session window');
+      const { ipcRenderer } = nodeRequire('electron');
+      ipcRenderer.send('create-session-window');
     },
     CNNW() { D.configNew(); },
     CNCL() { D.configClone(); },
@@ -124,10 +131,7 @@
       openURI(D.hlp.THIRDPARTY);
     },
     OWS() {
-      if (D.el && D.ide.floating) {
-        D.ipc.of.ride_master.emit('OWS');
-        return;
-      }
+      // Floating mode removed
       if (D.el && D.isLocalInterpreter) {
         const x = D.el.dialog.showOpenDialogSync(D.elw, {
           title: 'Open file',
@@ -150,10 +154,7 @@
     },
     NEW() {
       if (!D.el) return;
-      if (D.ide.floating) {
-        D.ipc.of.ride_master.emit('NEW');
-        return;
-      }
+      // Floating mode removed
       if (D.lastSpawnedExe) {
         const e = {};
         Object.keys(process.env).forEach((k) => { e[k] = process.env[k]; });
@@ -168,7 +169,17 @@
     },
     DK(me) { me.trigger('editor', 'editor.action.deleteLines'); },
     QCP(me) { me.trigger('editor', 'editor.action.quickCommand'); },
-    QIT() { D.quit(); },
+    QIT() { 
+      console.log('RIDE: QIT command called');
+      if (D.el) {
+        // For Electron, use app.quit()
+        const { app } = nodeRequire('@electron/remote');
+        app.quit();
+      } else {
+        // For browser, use window.close()
+        D.quit();
+      }
+    },
     ASW: D.prf.autoStatus.toggle,
     LBR: D.prf.lbar.toggle,
     SBR: D.prf.sbar.toggle,
@@ -245,10 +256,7 @@
     },
     LOG() {
       if (!D.el) return;
-      if (D.ide.floating) {
-        D.ipc.of.ride_master.emit('LOG');
-        return;
-      }
+      // Floating mode removed
       const w = new D.el.BrowserWindow({
         width: 400,
         height: 500,
@@ -348,8 +356,33 @@
   const defCmd = (x) => {
     const c = D.commands;
     c[x] || (c[x] = (me) => {
-        const h = me.dyalogCmds;
-        (h && h[x]) ? h.execCommand(x) : $.alert(`Command ${x} not implemented.`);
+        if (x === 'ER') console.log('RIDE: ER command triggered via defCmd');
+        
+        // Check if we have an IDE instance
+        if (!D.ide) {
+          console.error('RIDE: No IDE instance available for command', x);
+          return;
+        }
+        
+        // Get the currently focused window
+        const fw = D.ide.focusedWin;
+        if (fw && fw[x]) {
+          console.log('RIDE: Using focusedWin for command', x, 'window:', fw.constructor.name, 'id:', fw.id);
+          fw.execCommand(x);
+        } else if (me && me.dyalogCmds) {
+          // Fallback to editor's command handler
+          const h = me.dyalogCmds;
+          if (h && h[x]) {
+            console.log('RIDE: Using editor dyalogCmds for command', x);
+            h.execCommand(x);
+          } else {
+            console.error('RIDE: Command', x, 'not found in editor. dyalogCmds:', h);
+            $.alert(`Command ${x} not implemented.`);
+          }
+        } else {
+          console.error('RIDE: Command', x, 'not available. No focusedWin or editor context.');
+          $.alert(`Command ${x} not available.`);
+        }
     });
   };
   ('CLS CBP MA AC IT VAL indentOrComplete indentMoreOrAutocomplete STL TVO TVB'
@@ -399,9 +432,9 @@
         if (cmd === 'STL') { stlkbs.push(nkc); return; }
         if (cmd === 'FX') { fxkbs.push(nkc); return; }
         if (cmd === 'ER') {
-          cond = 'tracer && !editorHasMultipleSelections && !findInputFocussed && !inSnippetMode';
+          cond = '(session || tracer) && !editorHasMultipleSelections && !findInputFocussed && !inSnippetMode';
         } else if (cmd === 'TC' || cmd === 'IT') {
-          cond = 'tracer';
+          cond = '(session || tracer)';
         } else if (cmd === 'LL' || cmd === 'RL') {
           cond = '!suggestWidgetVisible && !findInputFocussed';
         } else if (nkc === kc.Escape) cond = '!suggestWidgetVisible && !editorHasMultipleSelections && !findWidgetVisible && !inSnippetMode';
@@ -412,7 +445,10 @@
     addCmd(D.keyMap.dyalog);
     me.addCommand(
       kc.Tab,
-      () => ed.indentOrComplete(me),
+      () => {
+        const h = me.dyalogCmds;
+        if (h && h.indentOrComplete) h.indentOrComplete(me);
+      },
       '!suggestWidgetVisible && !editorHasMultipleSelections && !findWidgetVisible && !inSnippetMode && !editorTabMovesFocus',
     );
     me.addCommand(
@@ -420,9 +456,18 @@
       () => me.trigger('editor', 'acceptSelectedSuggestion'),
       'suggestWidgetVisible',
     );
-    me.addCommand(kc.DownArrow, () => ed.DC(me), '!suggestWidgetVisible && !findInputFocussed');
-    me.addCommand(kc.UpArrow, () => ed.UC(me), '!suggestWidgetVisible && !findInputFocussed');
-    me.addCommand(kc.RightArrow, () => ed.RC(me), '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.DownArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.DC) h.DC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.UpArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.UC) h.UC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
+    me.addCommand(kc.RightArrow, () => {
+      const h = me.dyalogCmds;
+      if (h && h.RC) h.RC(me);
+    }, '!suggestWidgetVisible && !findInputFocussed');
 
     me.addAction({
       id: 'dyalog-skip-to-line',
@@ -431,7 +476,10 @@
       precondition: 'tracer && !session',
       keybindings: stlkbs,
       label: 'Skip to line',
-      run: (e) => ed.STL(e),
+      run: (e) => {
+        const h = e.dyalogCmds;
+        if (h && h.STL) h.STL(e);
+      },
     });
     me.addAction({
       id: 'dyalog-fix',
@@ -440,14 +488,33 @@
       precondition: '!tracer && !session',
       keybindings: fxkbs,
       label: 'Fix',
-      run: (e) => ed.FX(e),
+      run: (e) => {
+        const h = e.dyalogCmds;
+        if (h && h.FX) h.FX(e);
+      },
     });
   };
   D.remDefaultMap = (me) => {
-    const kbs = me._standaloneKeybindingService;
-    kbs.addDynamicKeybinding('-editor.action.insertCursorAtEndOfEachLineSelected', null, () => {});
-    kbs.addDynamicKeybinding('-editor.action.blockComment', null, () => {});
-    kbs.addDynamicKeybinding('-editor.action.formatDocument', null, () => {});
+    try {
+      const kbs = me._standaloneKeybindingService;
+      // In Monaco 0.52, we need to use the proper API to remove keybindings
+      // The minus prefix doesn't work anymore
+      if (kbs.removeKeybinding) {
+        // Try the newer API first
+        kbs.removeKeybinding('editor.action.insertCursorAtEndOfEachLineSelected');
+        kbs.removeKeybinding('editor.action.blockComment');
+        kbs.removeKeybinding('editor.action.formatDocument');
+      } else {
+        // Fall back to overriding with empty keybinding
+        const emptyKeybinding = monaco.KeyMod.chord(0, 0); // No key
+        kbs.addDynamicKeybinding('editor.action.insertCursorAtEndOfEachLineSelected', emptyKeybinding, () => {});
+        kbs.addDynamicKeybinding('editor.action.blockComment', emptyKeybinding, () => {});
+        kbs.addDynamicKeybinding('editor.action.formatDocument', emptyKeybinding, () => {});
+      }
+    } catch (e) {
+      console.warn('Failed to remove default keybindings:', e);
+      // Continue anyway - this is not critical
+    }
   };
   const l = {
     Unknown: 'unknown',

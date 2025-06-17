@@ -5,6 +5,9 @@
 //  D.prf.foo.toggle()                       // convenience function for booleans (numbers 0 and 1)
 //  D.prf.foo.getDefault()                   // retrieve default value
 'use strict'
+
+// Floating mode has been completely removed from the codebase
+
 D.prf = {};
 [ // name                 default (type is determined from default value; setter enforces type and handles encoding)
   ['autoStart',          0], // Auto-start default configuration when Ride starts
@@ -127,8 +130,16 @@ D.prf = {};
     + '\n  Reset Font Size          =ZMR {!browser}'
     + '\n  -                             {!browser}'
     + '\n  Toggle Full Screen            {!browser}'
-    + '\n&Window'
-    + '\n  Close All Windows        =CAW'
+    + '\n&Window                             {!browser}'
+    + '\n  Minimize                      {!browser}'
+    + '\n  Zoom                          {!browser}'
+    + '\n  Move Window to Left of Screen       {mac&&!browser}'
+    + '\n  Move Window to Right of Screen      {mac&&!browser}'
+    + '\n  -                             {!browser}'
+    + '\n  Close Window                  {!browser}'
+    + '\n  Close All Windows        =CAW      {!browser}'
+    + '\n  -                             {!browser}'
+    + '\n  Bring All to Front            {mac&&!browser}'
     + '\n&Action'
     + '\n  Edit                     =ED'
     + '\n  Trace                    =TC'
@@ -200,16 +211,21 @@ D.prf = {};
     if (l.length) y = p(); // old value as an object (only needed if we have any listeners)
     sx ? D.db.setItem(k, sx) : D.db.removeItem(k); // store
     for (let i = 0; i < l.length; i++) l[i](nx, y); // notify listeners
-    if (D.ipc) {
-      D.ipc.server && D.ipc.server.broadcast('prf', [k, nx]);
-      !s && D.ipc.of.ride_master && D.ipc.of.ride_master.emit('prf', [k, nx]);
-    }
+    // IPC removed - preference sync no longer needed
     return nx;
   };
   D.prf[k] = p;
   p.getDefault = () => d;
   p.toggle = () => p(!p());
 });
+
+// Floating mode has been completely removed - always return 0 (disabled)
+const originalFloating = D.prf.floating;
+D.prf.floating = function(x, s) {
+  return 0; // Always disabled
+};
+D.prf.floating.getDefault = () => 0;
+D.prf.floating.toggle = () => {}; // No-op
 
 D.db = !nodeRequire ? localStorage : (function DB() {
   const rq = nodeRequire;

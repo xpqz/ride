@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(npm test:*)",
+      "Bash(nvm:*)",
+      "Bash(cat:*)",
+      "Bash(npm view:*)",
+      "Bash(npm install)",
+      "Bash(npm run css:*)",
+      "Bash(timeout:*)",
+      "Bash(npx electron:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(node test-monaco.js)",
+      "Bash(ls:*)",
+      "Bash(node:*)",
+      "Bash(find:*)",
+      "Bash(open:*)",
+      "Bash(log show:*)",
+      "Bash(npm run clean:*)",
+      "Bash(pkill:*)",
+      "Bash(true)",
+      "Bash(npm run dev:*)",
+      "Bash(npm start)",
+      "Bash(./mk c)",
+      "Bash(./mk:*)"
+    ],
+    "deny": []
+  }
+}

@@ -4,13 +4,93 @@
 // and an instance of the workspace explorer (.wse) defined in wse.js
 // manages the language bar, its tooltips, and the insertion of characters
 // processes incoming Ride protocol messages
+
+// IDE Manager for multi-session support
+D.ideManager = {
+  ides: new Map(),
+  activeIde: null,
+  
+  createIDE(sessionId, opts) {
+    const ide = new D.IDE({ ...opts, sessionId });
+    this.ides.set(sessionId, ide);
+    this.setActiveIDE(sessionId);
+    return ide;
+  },
+  
+  setActiveIDE(sessionId) {
+    this.activeIde = this.ides.get(sessionId);
+    D.ide = this.activeIde; // Maintain backward compatibility
+    
+    // Update UI to reflect active session
+    if (this.activeIde) {
+      this.activeIde.updTitle();
+      this.activeIde.updPW();
+    }
+  },
+  
+  removeIDE(sessionId) {
+    const ide = this.ides.get(sessionId);
+    if (ide) {
+      // Clean up the IDE instance
+      if (ide.connected) {
+        ide.die();
+      }
+      this.ides.delete(sessionId);
+      
+      if (this.activeIde === ide) {
+        // Switch to another IDE or null
+        const remaining = Array.from(this.ides.values());
+        this.activeIde = remaining[0] || null;
+        D.ide = this.activeIde;
+        
+        // If no sessions left, show connection dialog
+        if (!this.activeIde) {
+          I.ide.hidden = 1;
+          I.cn.hidden = 0;
+          // Update menu when showing connection dialog
+          if (D.setUpMenu) {
+            setTimeout(() => D.setUpMenu(), 100);
+          }
+        }
+      }
+    }
+  },
+  
+  getSessionCount() {
+    return this.ides.size;
+  }
+};
+
 D.IDE = function IDE(opts = {}) {
   const ide = this;
-  I.cn.hidden = 1;
-  this.lbarRecreate();
-  D.ide = ide;
-  ide.dom = I.ide; I.ide.hidden = 0;
-  ide.floating = opts.floating;
+  ide.sessionId = opts.sessionId || `session_${Date.now()}`;
+  
+  // Create connection for this IDE instance
+  ide.connection = new D.Connection(ide);
+  
+  // Instance-specific send method
+  ide.send = (cmd, args) => {
+    // Check if we should block the send (same logic as original D.send)
+    if (!ide.promptType
+      && !/Interrupt$|TreeList|Reply|FormatCode|GetAutocomplete|SaveChanges|CloseWindow|Exit|SetPW/.test(cmd)) {
+      return;
+    }
+    ide.connection.send(cmd, args);
+  };
+  
+  // For single session mode (initial connection)
+  if (!opts.multiSession) {
+    I.cn.hidden = 1;
+    this.lbarRecreate();
+    D.ide = ide;
+    ide.dom = I.ide; I.ide.hidden = 0;
+  } else {
+    // For multi-session mode, we'll create a container
+    ide.dom = document.createElement('div');
+    ide.dom.className = 'ide-container';
+    this.lbarRecreate();
+  }
+  // Floating mode removed
   ide.hadErr = -1;
   ide.ipc = opts.ipc;
   // lines to execute: AtInputPrompt consumes one item from the queue, HadError empties it
@@ -22,25 +102,24 @@ D.IDE = function IDE(opts = {}) {
   ide.exec = (a, tc) => {
     if (a && a.length) {
       tc || (ide.pending = a.slice(1));
-      D.send('Execute', { trace: tc, text: `${a[0]}\n` });
+      ide.send('Execute', { trace: tc, text: `${a[0]}\n` });
       ide.getStats();
     }
   };
   ide.host = ''; ide.port = ''; ide.wsid = '';
   ide.wins = {};
-  if (ide.floating) {
-    ide.connected = 1;
-    this._focusedWin = null;
-    ide.ipc.emit('getSyntax');
-    Object.defineProperty(ide, 'focusedWin', {
-      set(w) {
-        ide.ipc.emit('focusedWin', w.id);
-        this._focusedWin = w;
-      },
-      get() { return this._focusedWin; },
-    });
-    ide.switchWin = (x) => { ide.ipc.emit('switchWin', x); };
-  } else {
+  // Focus management setup (needed for both floating and non-floating modes)
+  this._focusedWin = null;
+  Object.defineProperty(ide, 'focusedWin', {
+    set(w) {
+      console.log('RIDE: Setting focusedWin to:', w && w.constructor.name, 'id:', w && w.id);
+      this._focusedWin = w;
+    },
+    get() { return this._focusedWin; },
+  });
+  
+  // Floating mode removed - always use non-floating setup
+  {
     D.prf.title(ide.updTitle.bind(ide));
     I.sb_busy.hidden = true;
     I.sb_ml.hidden = !1;
@@ -55,11 +134,16 @@ D.IDE = function IDE(opts = {}) {
     };
     D.prf.showCCGC(ide.showCCGC);
     ide.showCCGC(D.prf.showCCGC());
-    ide.wins[0] = new D.Se(ide);
-    D.wins = ide.wins;
-    D.send('GetSyntaxInformation', {});
-    D.send('GetLanguageBar', {});
-    D.send('GetConfiguration', { names: ['AUTO_PAUSE_THREADS'] });
+    
+    // Only create session window for single-session mode
+    // Multi-session mode creates it separately
+    if (!opts.multiSession) {
+      ide.wins[0] = new D.Se(ide);
+      D.wins = ide.wins;
+      D.send('GetSyntaxInformation', {});
+      D.send('GetLanguageBar', {});
+      D.send('GetConfiguration', { names: ['AUTO_PAUSE_THREADS'] });
+    }
 
     ide.focusedWin = ide.wins['0']; // last focused window, it might not have the focus right now
     ide.switchWin = (x) => { // x: +1 or -1
@@ -72,10 +156,10 @@ D.IDE = function IDE(opts = {}) {
       });
       const j = i < 0 ? 0 : (i + a.length + x) % a.length;
       const w = a[j];
-      if (!w.bwId) D.elw.focus();
+      // Don't focus the global window in multi-window setup
+      // if (!w.bwId) D.elw.focus();
       w.focus(); return !1;
     };
-    D.el && D.prf.floating() && D.IPC_CreateWindow(1);
   }
   // We need to be able to temporarily block the stream of messages coming from socket.io
   // Creating a floating window can only be done asynchronously and it's possible that a message
@@ -94,12 +178,12 @@ D.IDE = function IDE(opts = {}) {
       if (text) w.insert(text);
       else w.execCommand(cmd);
     }
-    if (pfq.length) pfqtid = setTimeout(pfKeyRun, D.prf.floating() ? 100 : 20);
+    if (pfq.length) pfqtid = setTimeout(pfKeyRun, 20); // Floating mode removed
     else pfqtid = 0;
   }
   ide.pfKey = (x) => {
-    if (ide.floating) ide.ipc.emit('pfKey', x);
-    else {
+    // Floating mode removed - always use direct pfKey handling
+    {
       D.prf.pfkeys()[x].replace(/<(.+?)>|([^<>]+)/g, (_, cmd, text) => {
         pfq.push({ cmd, text });
       });
@@ -122,7 +206,7 @@ D.IDE = function IDE(opts = {}) {
         ide.wins[0].add(s);
       } else {
         const f = ide.handlers[a[0]];
-        f ? f.apply(ide, a.slice(1)) : D.send('UnknownCommand', { name: a[0] });
+        f ? f.apply(ide, a.slice(1)) : ide.send('UnknownCommand', { name: a[0] });
       }
       if (pfqtid) {
         clearTimeout(pfqtid);
@@ -134,10 +218,65 @@ D.IDE = function IDE(opts = {}) {
   function rrd() { // request rundown
     tid || (new Date() - last < 20 ? (tid = setTimeout(rd, 20)) : rd());
   }
-  D.recv = (x, y) => { mq.push([x, y]); rrd(); };
+  // Instance-specific receive method
+  ide.recv = (x, y) => { mq.push([x, y]); rrd(); };
+  
+  // Keep global D.recv for backward compatibility during transition
+  D.recv = (x, y) => { 
+    if (D.ide) D.ide.recv(x, y);
+    else console.warn('D.recv called with no active IDE');
+  };
+  
   ide.block = () => { blk += 1; };
   ide.unblock = () => { (blk -= 1) || rrd(); };
   ide.tracer = () => ide.getMRUWin(1);
+  
+  // Connection handlers
+  ide.handleConnectionOpen = () => {
+    console.log(`IDE ${ide.sessionId}: Connection opened`);
+    ide.connected = 1;
+    
+    // Clear any connection timeout
+    if (D.tmr) {
+      clearTimeout(D.tmr);
+      delete D.tmr;
+    }
+    
+    // Hide connection dialog
+    if (I.cn) I.cn.hidden = 1;
+    
+    // Update menu when connection is established
+    if (ide.updMenu) {
+      setTimeout(() => ide.updMenu(), 100);
+    }
+    
+    // Floating mode removed - always in docked mode
+    D.prf.title(ide.updTitle.bind(ide));
+    I.sb_busy.hidden = true;
+    I.sb_ml.hidden = !1;
+    I.sb_io.hidden = !1;
+    I.sb_trap.hidden = !1;
+    I.sb_dq.hidden = !1;
+    I.sb_sis.hidden = !1;
+    I.sb_threads.hidden = !1;
+  };
+  
+  ide.handleConnectionError = (err) => {
+    console.error(`IDE ${ide.sessionId}: Connection error:`, err);
+    ide.connected = 0;
+  };
+  
+  ide.handleConnectionClose = () => {
+    console.log(`IDE ${ide.sessionId}: Connection closed`);
+    ide.connected = 0;
+    if (ide.closing) return;
+    
+    // Show error if unexpected close
+    if (!ide.dead) {
+      $.err('Connection to interpreter was closed');
+    }
+  };
+  
   [{ comp_name: 'wse', prop_name: 'WSEwidth' }, { comp_name: 'dbg', prop_name: 'DBGwidth' }].forEach((obj) => {
     Object.defineProperty(ide, obj.prop_name, {
       get() {
@@ -252,12 +391,12 @@ D.IDE = function IDE(opts = {}) {
     settings: { showPopoutIcon: 0 },
     dimensions: { borderWidth: 7, headerHeight: 25 },
     labels: { minimise: 'unmaximise' },
-    content: [ide.floating ? { type: 'stack' } : {
+    content: [{
       title: 'Session',
       type: 'component',
       componentName: 'win',
       componentState: { id: 0 },
-    }],
+    }], // Floating mode removed
   }, $(ide.dom));
   ide.gl = gl;
   function Win(c, h) {
@@ -307,6 +446,53 @@ D.IDE = function IDE(opts = {}) {
   gl.registerComponent('win', Win);
   gl.registerComponent('wse', WSE);
   gl.registerComponent('dbg', DBG);
+  
+  // Session component for multi-session support
+  gl.registerComponent('session', function(container, state) {
+    console.log('RIDE: Creating session component for', state.sessionId);
+    const ide = D.ideManager.ides.get(state.sessionId);
+    if (!ide) {
+      console.error('RIDE: No IDE found for sessionId:', state.sessionId);
+      return;
+    }
+    
+    // Append the session window to this container
+    const sessionWin = ide.wins[0];
+    if (sessionWin) {
+      sessionWin.container = container;
+      container.getElement().append(sessionWin.dom);
+      
+      container.on('tab', tab => {
+        // Set tab title to show connection info
+        const title = state.title || `Session ${state.sessionId}`;
+        tab.element.attr('title', title);
+        tab.element.find('.lm_title').text(title);
+        
+        // Switch active IDE when tab is clicked
+        tab.element.on('mousedown', () => {
+          console.log('RIDE: Tab clicked, switching to session', state.sessionId);
+          D.ideManager.setActiveIDE(state.sessionId);
+        });
+      });
+      
+      // When tab gains focus, ensure it's the active IDE
+      container.on('show', () => {
+        console.log('RIDE: Tab shown, activating session', state.sessionId);
+        D.ideManager.setActiveIDE(state.sessionId);
+        sessionWin.focus();
+      });
+      
+      container.on('destroy', () => {
+        // Clean up the IDE when tab is closed
+        if (state.closeOnTabClose !== false) {
+          console.log('RIDE: Tab closed, removing session', state.sessionId);
+          D.ideManager.removeIDE(state.sessionId);
+        }
+      });
+    } else {
+      console.error('RIDE: No session window found for IDE');
+    }
+  });
   let sctid; // stateChanged timeout id
   gl.on('stateChanged', () => {
     clearTimeout(sctid);
@@ -360,14 +546,14 @@ D.IDE = function IDE(opts = {}) {
 
   let statsTid = 0;
   ide.getStats = $.debounce(100, () => {
-    if (ide.floating) ide.ipc.emit('getStats');
-    else if (statsTid) {
+    // Floating mode removed - always use direct getStats
+    if (statsTid) {
       D.send('GetSIStack', {});
       D.send('GetThreads', {});
     }
   });
   const toggleStats = () => {
-    if (ide.floating) return;
+    // Floating mode removed - always toggle stats
     // (un)subscribe to status here
     if (ide.hasSubscribe) {
       // New code for interpreters that support the Subscribe message
@@ -395,8 +581,8 @@ D.IDE = function IDE(opts = {}) {
   I.sb.hidden = !D.prf.sbar();
   updTopBtm();
   $(window).resize(updTopBtm);
-  const updMenu = () => {
-    if (D.ide.floating) return;
+  const updMenu = ide.updMenu = () => {
+    // Floating mode removed - always update menu
     try {
       D.installMenu(D.parseMenuDSL(D.prf.menu()));
     } catch (e) {
@@ -424,7 +610,7 @@ D.IDE = function IDE(opts = {}) {
   });
   D.prf.menu(updMenu);
   D.prf.keys(updMenu);
-  !ide.floating && setTimeout(updMenu, 100);
+  setTimeout(updMenu, 100); // Floating mode removed
   D.prf.autoPW((x) => { x && ide.updPW(1); });
   D.prf.autoCloseBrackets((x) => { eachWin((w) => { !w.bwId && w.autoCloseBrackets(!!x); }); });
   D.prf.ilf((x) => {
@@ -475,14 +661,13 @@ D.IDE = function IDE(opts = {}) {
     togglePanel(x, 'dbg', 'Debug', 0);
     updMenu();
   };
-  if (!ide.floating) {
-    D.prf.wse(toggleWSE);
-    D.prf.dbg(toggleDBG);
-    D.prf.wse() && setTimeout(() => toggleWSE(D.prf.wse()), 500);
-    D.prf.dbg() && setTimeout(() => toggleDBG(D.prf.dbg()), 500);
-  }
+  // Floating mode removed - always set up WSE and DBG
+  D.prf.wse(toggleWSE);
+  D.prf.dbg(toggleDBG);
+  D.prf.wse() && setTimeout(() => toggleWSE(D.prf.wse()), 500);
+  D.prf.dbg() && setTimeout(() => toggleDBG(D.prf.dbg()), 500);
   // OSX is stealing our focus.  Let's steal it back!  Bug #5
-  D.mac && !ide.floating && setTimeout(() => { ide.wins[0].focus(); }, 500);
+  D.mac && setTimeout(() => { ide.wins[0].focus(); }, 500); // Floating mode removed
   D.prf.lineNums((x) => {
     eachWin((w) => w.setLN && w.setLN(x));
     updMenu();
@@ -508,7 +693,7 @@ D.IDE = function IDE(opts = {}) {
     });
   });
   D.prf.selectionHighlight((x) => { eachWin((w) => !w.bwId && w.selectionHighlight(x)); });
-  D.prf.showSessionMargin((x) => { !ide.floating && ide.wins['0'].showSessionMargin(x); });
+  D.prf.showSessionMargin((x) => { ide.wins['0'].showSessionMargin(x); }); // Floating mode removed
   D.prf.showEditorToolbar((x) => {
     $('.ride_win.edit_trace').toggleClass('no-toolbar', !x);
     updTopBtm();
@@ -518,6 +703,7 @@ D.IDE = function IDE(opts = {}) {
 
   ide.handlers = { // for Ride protocol messages
     Identify(x) {
+      console.log('RIDE: Received Identify message at', new Date().toISOString());
       D.remoteIdentification = x;
       D.apiVersion = x.apiVersion || 0;
       D.isClassic = x.arch[0] === 'C';
@@ -535,8 +721,14 @@ D.IDE = function IDE(opts = {}) {
       ide.updTitle();
       ide.connected = 1;
       ide.updPW();
-      clearTimeout(D.tmr);
-      delete D.tmr;
+      console.log('RIDE: Clearing timeout in Identify handler at', new Date().toISOString(), 'D.tmr exists:', !!D.tmr);
+      if (D.tmr) {
+        clearTimeout(D.tmr);
+        delete D.tmr;
+        console.log('RIDE: Connection timeout cleared successfully in Identify');
+      } else {
+        console.error('RIDE: WARNING - No timeout to clear in Identify!');
+      }
       if (D.apiVersion > 0) {
         D.send('GetLog', { format: 'json' });
       }
@@ -629,7 +821,7 @@ D.IDE = function IDE(opts = {}) {
     },
     ReplyGetSyntaxInformation(x) {
       D.parseSyntaxInformation(x);
-      D.ipc && D.ipc.server.broadcast('syntax', D.syntax);
+      // IPC removed - syntax broadcast no longer needed
     },
     ValueTip(x) {
       const req = ide.valueTipRequests[x.token];
@@ -656,17 +848,24 @@ D.IDE = function IDE(opts = {}) {
     },
     ReplySaveChanges(x) { const w = ide.wins[x.win]; w && w.saved(x.err); },
     CloseWindow(x) {
+      console.log('RIDE: CloseWindow called for window', x.win);
       const w = ide.wins[x.win];
       if (!w) return;
+      console.log('RIDE: Window type:', w.constructor.name, 'bwId:', w.bwId);
       if (w.bwId) {
         ide.block();
         w.close();
         w.id = -1;
       } else if (w) {
-        w.me.getModel().dispose();
+        // Dispose the editor instance first (this cleans up all event handlers)
+        console.log('RIDE: Disposing editor instance');
+        w.me.dispose();
+        // The model is automatically disposed when the editor is disposed
         w.container && w.container.close();
       }
-      delete ide.wins[x.win]; ide.focusMRUWin();
+      delete ide.wins[x.win];
+      console.log('RIDE: Calling focusMRUWin after closing window', x.win);
+      ide.focusMRUWin();
       ide.WSEwidth = ide.wsew; ide.DBGwidth = ide.dbgw;
       w.tc && ide.getStats();
     },
@@ -708,10 +907,7 @@ D.IDE = function IDE(opts = {}) {
       const editorOpts = { id: w, name: ee.name, tc: ee.debugger };
       !editorOpts.tc && (ide.hadErr = -1);
       ide.block(); // unblock the message queue once monaco ready
-      if (D.el && D.prf.floating() && !ide.dead) {
-        D.IPC_LinkEditor({ editorOpts, ee });
-        done = 1;
-      } else if (D.elw && !D.elw.isFocused()) D.elw.focus();
+      // Floating mode removed - always create editor in main window
       if (done) return;
       const ed = new D.Ed(ide, editorOpts);
       ed.focusTS = +new Date();
@@ -849,7 +1045,7 @@ D.IDE = function IDE(opts = {}) {
     ReplyTreeList(x) { ide.wse.replyTreeList(x); },
     StatusOutput(x) {
       if (!D.el) return;
-      D.ipc.server.emit(D.stw_bw.socket, 'add', x);
+      // IPC removed - status window updates no longer needed
       !D.prf.statusWindow() && D.prf.autoStatus() && D.prf.statusWindow(1);
     },
     ReplyGetLog(x) {
@@ -891,9 +1087,8 @@ D.IDE = function IDE(opts = {}) {
 D.IDE.prototype = {
   getValueTip(source, id, request) {
     const ide = this;
-    if (this.floating) {
-      this.ipc.emit('getValueTip', [source, id, request]);
-    } else {
+    // Floating mode removed - always use direct getValueTip
+    {
       request.token = ide.valueTipToken++;
       ide.valueTipRequests[request.token] = { id, source };
       D.send('GetValueTip', request);
@@ -922,6 +1117,12 @@ D.IDE.prototype = {
     if (ide.dead) return;
     ide.dead = 1;
     ide.connected = 0;
+    
+    // Disconnect the connection to prevent memory leaks
+    if (ide.connection) {
+      ide.connection.disconnect();
+    }
+    
     ide.dom.classList.add('disconnected');
     Object.keys(ide.wins).forEach((k) => { ide.wins[k].die(); });
   },
@@ -953,12 +1154,13 @@ D.IDE.prototype = {
       '{RIDE_VER}': v.version,
     };
     ide.caption = D.prf.title().replace(/\{\w+\}/g, (x) => m[x.toUpperCase()] || x) || 'Dyalog';
-    D.ipc && D.ipc.server.broadcast('caption', ide.caption);
+    // IPC removed - caption broadcast no longer needed
     document.title = ide.caption;
   },
   focusWin(w) {
     if (this.hadErr === 0) {
-      D.elw && D.elw.focus();
+      // Don't focus global window in multi-window setup
+      // Just focus the session window
       this.wins[0].focus();
       delete this.wins[0].hadErrTmr;
       this.hadErr = -1;
@@ -966,8 +1168,10 @@ D.IDE.prototype = {
   },
   focusMRUWin() { // most recently used
     const w = this.getMRUWin();
-    D.elw && !w.bwId && D.elw.focus();
+    console.log('RIDE: focusMRUWin - focusing window:', w.constructor.name, 'id:', w.id);
+    // Don't focus global window in multi-window setup
     w.focus();
+    console.log('RIDE: focusMRUWin - focus() called on window');
   },
   getMRUWin(tracer) { // most recently focused window (filtered by tracer if set)
     const { wins } = this;
@@ -986,10 +1190,7 @@ D.IDE.prototype = {
     const b = this.dom.ownerDocument.body;
     b.className = `zoom${z} ${b.className.split(/\s+/).filter((s) => !/^zoom-?\d+$/.test(s)).join(' ')}`;
     this.gl.container.resize();
-    if (this.floating) {
-      D.ipc.of.ride_master.emit('zoom', z);
-      return;
-    }
+    // Floating mode removed - always apply zoom to all windows
     const { wins } = this;
     const se = wins['0'];
     Object.keys(wins).forEach((x) => { wins[x].zoom(z); });
@@ -999,7 +1200,7 @@ D.IDE.prototype = {
   LBR: D.prf.lbar.toggle,
   SBR: D.prf.sbar.toggle,
   SSW: D.prf.statusWindow.toggle,
-  FLT: D.prf.floating.toggle,
+  FLT: () => { /* Floating mode removed */ },
   WRP: D.prf.wrap.toggle,
   TVB: D.prf.breakPts.toggle,
   LN: D.prf.lineNums.toggle,
@@ -1007,7 +1208,7 @@ D.IDE.prototype = {
   UND() { this.focusedWin.me.trigger('D', 'undo'); },
   RDO() { this.focusedWin.me.trigger('D', 'redo'); },
   Edit(data) {
-    if (this.floating) { this.ipc.emit('Edit', data); return; }
+    // Floating mode removed - always use direct Edit
     D.pendingEdit = D.pendingEdit || data;
     D.pendingEdit.unsaved = D.pendingEdit.unsaved || {};
     const u = D.pendingEdit.unsaved;
@@ -1020,8 +1221,8 @@ D.IDE.prototype = {
       if (v) u[k] = v;
       bws = bws || v === -1;
     });
-    if (bws && D.ipc.server) {
-      D.ipc.server.broadcast('getUnsaved');
+    if (bws) {
+      // IPC removed - getUnsaved broadcast no longer needed
     } else {
       D.send('Edit', D.pendingEdit);
       delete D.pendingEdit;
@@ -1050,7 +1251,7 @@ D.IDE.prototype = {
   },
   onbeforeunload(e) { // called when the user presses [X] on the OS window
     const ide = this;
-    if (ide.floating && ide.connected) { e.returnValue = false; }
+    // Floating mode removed
     if (!ide.dead) {
       Object.keys(ide.wins).forEach((k) => {
         const ed = ide.wins[k];

@@ -36,7 +36,9 @@
   }
   function cancel() {
     if (D.el) {
-      D.ipc.of.ride_master.emit('prfClose');
+      // IPC removed - close preferences window directly
+      const bw = D.el.BrowserWindow.fromId(D.prf_bw.id);
+      bw.hide();
     } else {
       d.hidden = 1; D.ide.wins[0].focus();
     }
@@ -44,13 +46,9 @@
   function ok() { apply() && cancel(); }
   D.prf_ui = function PrfUI(tab) {
     if (D.prf_bw) {
-      D.ipc.server.emit(D.prf_bw.socket, 'show', tab);
+      // IPC removed - show preferences window directly
       const bw = D.el.BrowserWindow.fromId(D.prf_bw.id);
       bw.show();
-      return !1;
-    }
-    if (D.ide && D.ide.floating) {
-      D.ipc.of.ride_master.emit('prfShow', tab);
       return !1;
     }
     if (!d) {
