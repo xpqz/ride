@@ -3,7 +3,7 @@
   "version": "4.7.0",
   "private": true,
   "main": "main.js",
-  "productName": "Ride-4.7",
+  "productName": "Ride",
   "engines": {
     "node": ">=23.8.0",
     "npm": ">=10.9.0"

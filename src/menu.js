@@ -34,9 +34,42 @@ D.installMenu = function Menu(mx) {
         hide: 0,
         hideothers: 0,
         showall: 'unhide',
+        minimize: 0,
+        zoom: 0,
+        front: 0,
+        close: 0,
       };
       const r = x[''].replace(/[& ]/g, '').toLowerCase();
       if (r in roles) h.role = roles[r] || r;
+      
+      // Handle special macOS window actions
+      if (x[''] === 'Move Window to Left of Screen') {
+        h.click = () => {
+          const win = D.el.BrowserWindow.getFocusedWindow();
+          if (win) {
+            const { screen } = D.el;
+            const { x, y } = win.getBounds();
+            const display = screen.getDisplayNearestPoint({ x, y });
+            const { width, height } = display.workArea;
+            win.setBounds({ x: display.workArea.x, y: display.workArea.y, width: Math.floor(width / 2), height });
+          }
+        };
+      } else if (x[''] === 'Move Window to Right of Screen') {
+        h.click = () => {
+          const win = D.el.BrowserWindow.getFocusedWindow();
+          if (win) {
+            const { screen } = D.el;
+            const { x, y } = win.getBounds();
+            const display = screen.getDisplayNearestPoint({ x, y });
+            const { width, height } = display.workArea;
+            win.setBounds({ x: display.workArea.x + Math.floor(width / 2), y: display.workArea.y, width: Math.floor(width / 2), height });
+          }
+        };
+      } else if (x[''] === 'Bring All to Front') {
+        h.role = 'front';
+      } else if (x[''] === 'Close Window') {
+        h.role = 'close';
+      }
       if (x.items) {
         h.submenu = new D.el.Menu();
         x.items.forEach((y) => { h.submenu.append(render(y)); });
@@ -45,7 +78,53 @@ D.installMenu = function Menu(mx) {
       return mi;
     };
     const m = new D.el.Menu();
-    mx.forEach((y) => { m.append(render(y)); });
+    
+    // Process menu items and inject window list into Window menu
+    mx.forEach((y) => {
+      const menuItem = render(y);
+      
+      // Set role for Window menu
+      if (y[''] === 'Window') {
+        menuItem.role = 'window';
+      }
+      
+      // If this is the Window menu, inject the window list
+      if (y[''] === 'Window' && y.items) {
+        const submenu = menuItem.submenu;
+        const windowManager = nodeRequire('./src/window-manager');
+        
+        // Find where to insert window list (after the separator after "Close All Windows")
+        let insertIndex = -1;
+        const items = submenu.items;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].label === 'Close All Windows') {
+            // Find the next separator
+            for (let j = i + 1; j < items.length; j++) {
+              if (items[j].type === 'separator') {
+                insertIndex = j + 1;
+                break;
+              }
+            }
+            break;
+          }
+        }
+        
+        // Build and insert window menu items
+        const windowItems = windowManager.buildWindowMenuItems();
+        if (windowItems.length > 0 && insertIndex >= 0) {
+          // Add another separator before window list
+          submenu.insert(insertIndex, new D.el.MenuItem({ type: 'separator' }));
+          
+          // Add all window items
+          windowItems.forEach((item, idx) => {
+            submenu.insert(insertIndex + 1 + idx, item);
+          });
+        }
+      }
+      
+      m.append(menuItem);
+    });
+    
     if (D.mac) D.el.Menu.setApplicationMenu(m);
     else D.elw.setMenu(m);
   } else {

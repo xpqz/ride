@@ -365,7 +365,18 @@ console.log('RIDE: init.js file loaded');
     if (D.mac) platform = ' platform-mac';
     else if (D.win) platform = ' platform-windows';
 
-    if (D.el) document.body.className += platform;
+    if (D.el) {
+      document.body.className += platform;
+      
+      // Handle dock menu new session command
+      const { ipcRenderer } = nodeRequire('electron');
+      ipcRenderer.on('new-session-from-dock', () => {
+        console.log('RIDE: New session requested from dock menu');
+        if (D.commands && D.commands.CNC) {
+          D.commands.CNC();
+        }
+      });
+    }
 
     window.focused = true;
     window.onblur = (x) => { window.focused = x.type === 'focus'; };

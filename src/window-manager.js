@@ -127,6 +127,9 @@ class WindowManager {
       sessionId: null
     });
     
+    // Notify that windows changed
+    this.emit('windows-changed');
+    
     // Set up window events
     this.setupWindowEvents(this.mainWindow, 'main');
     
@@ -167,6 +170,9 @@ class WindowManager {
       type: 'session',
       sessionId: sessionId
     });
+    
+    // Notify that windows changed
+    this.emit('windows-changed');
     
     // Set up window events
     this.setupWindowEvents(sessionWindow, 'session', sessionId);
@@ -217,16 +223,21 @@ class WindowManager {
     
     window.on('closed', () => {
       this.windows.delete(window.id);
+      this.emit('windows-changed');
       this.updateWindowMenu();
       
-      // If this was the last window, quit the app
-      if (this.windows.size === 0) {
-        app.quit();
-      }
+      // Note: app.quit() is handled by the window-all-closed event in main.js
+      // This allows proper platform-specific behavior (e.g., staying open on macOS)
     });
     
     window.on('ready-to-show', () => {
       window.show();
+    });
+    
+    // Update menu when window title changes
+    window.on('page-title-updated', () => {
+      this.emit('windows-changed');
+      this.updateWindowMenu();
     });
   }
   
@@ -299,6 +310,89 @@ class WindowManager {
         winInfo.window.close();
       }
     });
+  }
+  
+  // Get window title for display in Window menu
+  getWindowTitle(window) {
+    if (!window || window.isDestroyed()) return '';
+    const winInfo = this.windows.get(window.id);
+    if (!winInfo) return window.getTitle();
+    
+    // Use the actual window title which should reflect connection state
+    return window.getTitle();
+  }
+  
+  // Build Window menu items for all open windows
+  buildWindowMenuItems() {
+    const { Menu, MenuItem } = require('electron');
+    const items = [];
+    
+    // Add each window to the menu
+    this.windows.forEach((winInfo, windowId) => {
+      if (!winInfo.window.isDestroyed()) {
+        const title = this.getWindowTitle(winInfo.window);
+        const item = new MenuItem({
+          label: title,
+          click: () => this.focusWindow(windowId),
+          type: 'checkbox',
+          checked: winInfo.window.isFocused()
+        });
+        items.push(item);
+      }
+    });
+    
+    return items;
+  }
+  
+  // Set up the application's dock menu (macOS)
+  setupDockMenu() {
+    if (process.platform === 'darwin') {
+      const { app, Menu, MenuItem } = require('electron');
+      const updateDockMenu = () => {
+        const dockMenu = Menu.buildFromTemplate([
+          {
+            label: 'New Session',
+            click: () => {
+              // Find a window to send the command to
+              const firstWindow = this.getAllWindows()[0];
+              if (firstWindow) {
+                firstWindow.webContents.send('new-session-from-dock');
+              }
+            }
+          },
+          { type: 'separator' }
+        ]);
+        
+        // Add all windows to dock menu
+        this.windows.forEach((winInfo) => {
+          if (!winInfo.window.isDestroyed()) {
+            dockMenu.append(new MenuItem({
+              label: this.getWindowTitle(winInfo.window),
+              click: () => this.focusWindow(winInfo.window.id)
+            }));
+          }
+        });
+        
+        app.dock.setMenu(dockMenu);
+      };
+      
+      // Update dock menu whenever windows change
+      this.on('windows-changed', updateDockMenu);
+      updateDockMenu();
+    }
+  }
+  
+  // Make WindowManager an EventEmitter for change notifications
+  on(event, listener) {
+    this.listeners = this.listeners || {};
+    this.listeners[event] = this.listeners[event] || [];
+    this.listeners[event].push(listener);
+  }
+  
+  emit(event, ...args) {
+    if (this.listeners && this.listeners[event]) {
+      this.listeners[event].forEach(listener => listener(...args));
+    }
   }
 }
 

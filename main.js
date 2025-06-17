@@ -22,6 +22,9 @@ if (ps.env.spectron_temp_dir) {
 el.app.on('ready', () => {
   console.log('RIDE MAIN: App ready, setting up IPC handlers');
   
+  // Set up dock menu for macOS
+  windowManager.setupDockMenu();
+  
   // Set up IPC handlers FIRST before creating window
   el.ipcMain.on('create-session-window', (evt) => {
     console.log('RIDE: ===== CREATING NEW SESSION WINDOW =====');
@@ -183,11 +186,28 @@ el.app.on('ready', () => {
   }
 });
 
-// Window manager handles quit logic when all windows close
-// el.app.on('window-all-closed', () => { el.app.quit(); });
+// Handle window-all-closed event
+el.app.on('window-all-closed', () => {
+  // On macOS, keep the app running even when all windows are closed
+  // On other platforms, quit the app
+  if (process.platform !== 'darwin') {
+    el.app.quit();
+  }
+});
 el.app.on('will-finish-launching', () => {
   el.app.on('open-file', (event, path) => {
     global.open_file = path;
   });
+});
+
+// Handle app activation (clicking dock icon on macOS)
+el.app.on('activate', () => {
+  // If no windows are open, create a new one
+  if (windowManager.getAllWindows().length === 0) {
+    const w = windowManager.createMainWindow();
+    global.elw = w;
+    elm.enable(w.webContents);
+    w.loadURL(`file://${__dirname}/index.html`);
+  }
 });
 global.js = (i, x) => el.BrowserWindow.fromId(i).webContents.executeJavaScript(x);
