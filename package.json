@@ -1,9 +1,13 @@
 {
-  "name": "ride46",
-  "version": "4.6.0",
+  "name": "ride47",
+  "version": "4.7.0",
   "private": true,
   "main": "main.js",
-  "productName": "Ride-4.6",
+  "productName": "Ride",
+  "engines": {
+    "node": ">=23.8.0",
+    "npm": ">=10.9.0"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "npm run css && npm run start",
@@ -18,8 +22,7 @@
   "dependencies": {
     "@electron/remote": "^2.1.2",
     "jquery": "^3.7.0",
-    "monaco-editor": "^0.31.1",
-    "node-ipc": "^10.1.0",
+    "monaco-editor": "^0.52.2",
     "os-locale": "^5.0.0",
     "ssh2": "^1.14.0",
     "toastr": "^2.1.4"

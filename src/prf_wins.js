@@ -24,9 +24,12 @@
       q.fw.onchange = updEnabled;
       q.fs.onchange = updEnabled;
       if (!D.el) {
-        D.prf.floating() && D.prf.floating(0);
+        // Floating mode removed
         q.fw.disabled = true;
       }
+      // Floating mode has been removed - always hide these options
+      q.fw.closest('tr').style.display = 'none';
+      q.fs.closest('tr').style.display = 'none';
       const updEnabling = () => {
         q.aim.disabled = !q.ai.checked;
         q.isw.disabled = !q.ai.checked;
@@ -72,7 +75,7 @@
       q.dce.checked = !!p.doubleClickToEdit();
       q.set.checked = !!p.showEditorToolbar();
       q.fit.checked = !!p.filenameInTitle();
-      q.fw.checked = !!D.prf.floating();
+      q.fw.checked = false; // Floating mode removed
       q.fs.checked = !!D.prf.floatSingle();
       q.mm.checked = !!D.prf.editWinsRememberPos();
       q.sw.value = w.width;
@@ -89,7 +92,7 @@
     save() {
       const p = D.prf;
       D.prf.editWinsRememberPos(q.mm.checked);
-      D.prf.floating(q.fw.checked);
+      // Floating mode removed - no-op
       D.prf.floatSingle(q.fs.checked);
       p.indent             (q.ai.checked ? (+q.isw.value || 0) : -1);
       p.indentMethods      (q.aim.checked ? (+q.swm.value || 0) : -1);

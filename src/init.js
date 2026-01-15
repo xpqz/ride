@@ -1,7 +1,10 @@
 const Console = console;
+console.log('RIDE: init.js file loaded');
 
 {
+  console.log('RIDE: init.js block executing');
   const init = () => {
+    console.log('RIDE: init() called');
     I.apl_font.hidden = true;
 
     if (D.el) {
@@ -110,18 +113,59 @@ const Console = console;
     if (D.el) {
       const qp = nodeRequire('querystring').parse(loc.search.slice(1));
       if (qp.type === 'prf') {
-        D.ipc.config.appspace = qp.appid;
         document.body.className += ' floating-window';
-        D.IPC_Prf();
+        console.log('RIDE: Preference window loaded');
         I.splash.hidden = 1;
       } else if (qp.type === 'editor') {
-        D.ipc.config.appspace = qp.appid;
-        document.body.className += ' floating-window';
-        D.IPC_Client(+qp.winId);
-        I.splash.hidden = 1;
+        // Floating mode disabled, close this window
+        window.close();
+      } else if (qp.newSession) {
+        // New session window - skip auxiliary windows and auto-start
+        console.log('RIDE: New session window detected, skipping auxiliary windows');
+        D.windowType = 'newSession'; // Track that this is a new session window
+        
+        // Set up IPC handlers for new session window
+        const { ipcRenderer } = nodeRequire('electron');
+        
+        // Handle request to check state and update menu
+        ipcRenderer.on('check-state-and-update-menu', () => {
+          console.log('RIDE: Checking state and updating menu for focused window');
+          
+          // Check current state of this window
+          const showingConnectionDialog = I.cn && !I.cn.hidden;
+          const hasConnectedSession = D.ide && D.ide.connected;
+          
+          console.log('RIDE: Window state - Connection dialog visible:', showingConnectionDialog);
+          console.log('RIDE: Window state - Has connected session:', hasConnectedSession);
+          
+          // Update menu based on THIS window's current state
+          if (showingConnectionDialog) {
+            console.log('RIDE: This window is showing connection dialog - using connection menu');
+            if (D.setUpMenu) {
+              D.setUpMenu();
+            }
+          } else if (hasConnectedSession) {
+            console.log('RIDE: This window has connected session - using session menu');
+            if (D.ide && D.ide.updMenu) {
+              D.ide.updMenu();
+            }
+          } else {
+            console.log('RIDE: This window has no connection - using connection menu');
+            if (D.setUpMenu) {
+              D.setUpMenu();
+            }
+          }
+        });
+        
+        setTimeout(() => {
+          I.splash.hidden = 1;
+          nodeRequire(`${__dirname}/src/cn`)({ isNewSession: true });
+        }, 100);
       } else {
-        const winsLoaded = D.IPC_Server();
-        const appid = D.ipc.config.appspace;
+        // Main window startup
+        console.log('RIDE: Creating auxiliary windows');
+        
+        // Create preference window
         let bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -138,8 +182,10 @@ const Console = console;
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`${loc}?type=prf&appid=${appid}`);
+        bw.loadURL(`${loc}?type=prf`);
         D.prf_bw = { id: bw.id };
+        
+        // Create dialog window
         bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -160,8 +206,10 @@ const Console = console;
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`file://${__dirname}/dialog.html?appid=${appid}`);
+        bw.loadURL(`file://${__dirname}/dialog.html`);
         D.dlg_bw = { id: bw.id };
+        
+        // Create status window
         bw = new D.el.BrowserWindow({
           show: false,
           parent: D.elw,
@@ -181,13 +229,86 @@ const Console = console;
           },
         });
         D.elm.enable(bw.webContents);
-        bw.loadURL(`file://${__dirname}/status.html?appid=${appid}`);
+        bw.loadURL(`file://${__dirname}/status.html`);
         D.stw_bw = { id: bw.id };
-        D.elw.focus();
-        Promise.all(winsLoaded).then(() => {
+        
+        // Only focus the main window if this is not a new session window
+        if (!qp.newSession) {
+          D.elw.focus();
+        }
+        
+        // Handle init-session message from main process
+        const { ipcRenderer } = nodeRequire('electron');
+        ipcRenderer.on('init-session', (event, data) => {
+          console.log('RIDE: Received init-session:', data);
+          D.sessionId = data.sessionId;
+          D.isNewSession = data.isNewSession;
+          
+          // Hide splash and show connection dialog
           I.splash.hidden = 1;
           nodeRequire(`${__dirname}/src/cn`)();
         });
+        
+        // Handle init-new-session for newly created windows
+        ipcRenderer.on('init-new-session', (event, data) => {
+          console.log('RIDE: Received init-new-session:', data);
+          D.sessionId = data.sessionId;
+          D.isNewSession = true;
+          
+          // For new session windows, skip auto-start
+          setTimeout(() => {
+            I.splash.hidden = 1;
+            nodeRequire(`${__dirname}/src/cn`)({ isNewSession: true });
+          }, 100);
+        });
+        
+        // Handle request to check state and update menu (for main window)
+        if (D.el) {
+          ipcRenderer.on('check-state-and-update-menu', () => {
+            console.log('RIDE: Checking state and updating menu for focused window');
+            
+            // Check current state of this window
+            const showingConnectionDialog = I.cn && !I.cn.hidden;
+            const hasConnectedSession = D.ide && D.ide.connected;
+            
+            console.log('RIDE: Window state - Connection dialog visible:', showingConnectionDialog);
+            console.log('RIDE: Window state - Has connected session:', hasConnectedSession);
+            
+            // Update menu based on THIS window's current state
+            if (showingConnectionDialog) {
+              console.log('RIDE: This window is showing connection dialog - using connection menu');
+              if (D.setUpMenu) {
+                D.setUpMenu();
+              }
+            } else if (hasConnectedSession) {
+              console.log('RIDE: This window has connected session - using session menu');
+              if (D.ide && D.ide.updMenu) {
+                D.ide.updMenu();
+              }
+            } else {
+              console.log('RIDE: This window has no connection - using connection menu');
+              if (D.setUpMenu) {
+                D.setUpMenu();
+              }
+            }
+          });
+        }
+        
+        // Normal initialization - all windows start the same way
+        console.log('RIDE: Window initialization');
+        
+        // Give windows a moment to initialize
+        setTimeout(() => {
+          console.log('RIDE: Hiding splash screen');
+          I.splash.hidden = 1;
+          console.log('RIDE: Loading connection dialog');
+          try {
+            nodeRequire(`${__dirname}/src/cn`)();
+          } catch (e) {
+            console.error('RIDE: Failed to load connection dialog:', e);
+            alert('Failed to load connection dialog: ' + e.message);
+          }
+        }, 100);
       }
     } else {
       const ws = new WebSocket((loc.protocol === 'https:' ? 'wss://' : 'ws://') + loc.host);
@@ -233,7 +354,6 @@ const Console = console;
         return;
       }
       try {
-        D.ipc && D.ipc.server.stop();
         D.ide && D.prf.connectOnQuit() && D.commands.CNC();
         if (D.ide && !D.ide.connected && D.el) D.wins[0].histWrite();
       } finally {
@@ -245,7 +365,18 @@ const Console = console;
     if (D.mac) platform = ' platform-mac';
     else if (D.win) platform = ' platform-windows';
 
-    if (D.el) document.body.className += platform;
+    if (D.el) {
+      document.body.className += platform;
+      
+      // Handle dock menu new session command
+      const { ipcRenderer } = nodeRequire('electron');
+      ipcRenderer.on('new-session-from-dock', () => {
+        console.log('RIDE: New session requested from dock menu');
+        if (D.commands && D.commands.CNC) {
+          D.commands.CNC();
+        }
+      });
+    }
 
     window.focused = true;
     window.onblur = (x) => { window.focused = x.type === 'focus'; };
@@ -327,5 +458,14 @@ const Console = console;
     }
   };
 
-  D.mop.then(() => init());
+  // Wait for Monaco editor to load before initializing
+  D.mop.then(() => {
+    console.log('RIDE: Monaco loaded, calling init()');
+    init();
+  }).catch(e => {
+    console.error('RIDE: Monaco failed to load:', e);
+    // For now, still proceed without Monaco to keep the app functional
+    console.warn('RIDE: Proceeding without Monaco Editor');
+    init();
+  });
 }

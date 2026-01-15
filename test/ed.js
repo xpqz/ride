@@ -87,7 +87,8 @@ test(
     text = await app.electron.clipboard.readText();
     t.is(text.slice(-5), '⍝  ab');
 
-    await c.execute(() => { D.prf.floating(1) });
+    // Floating mode removed - skip this test
+    // await c.execute(() => { D.prf.floating(1) });
     await c.pause(100);
     const whs = await c.getWindowHandles();
     await c.keys([')ED g', 'Enter']);

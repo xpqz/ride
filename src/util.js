@@ -146,7 +146,7 @@
     stringDialog(x, f) {
       if (D.dlg_bw) {
         dlgCb[x.token] = f;
-        D.ipc.server.emit(D.dlg_bw.socket, 'show', x);
+        // IPC removed - show dialog directly
         const bw = D.el.BrowserWindow.fromId(D.dlg_bw.id);
         bw.show();
         return;
@@ -237,7 +237,7 @@
         return;
       } else if (D.dlg_bw) {
         dlgCb[x.token] = f;
-        D.ipc.server.emit(D.dlg_bw.socket, 'show', x);
+        // IPC removed - show dialog directly
         const bw = D.el.BrowserWindow.fromId(D.dlg_bw.id);
         bw.show();
         return;

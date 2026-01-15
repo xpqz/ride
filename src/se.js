@@ -580,6 +580,7 @@ D.Se.prototype = {
   cursorBlinking(x) { this.me.updateOptions({ cursorBlinking: x }); },
   hasFocus() { return this.me.hasTextFocus(); },
   focus() {
+    console.log('RIDE: Se.focus() called');
     let q = this.container;
     let p = q && q.parent;
     const l = q && q.layoutManager;
@@ -588,9 +589,12 @@ D.Se.prototype = {
     while (p) {
       p.setActiveContentItem && p.setActiveContentItem(q); q = p; p = p.parent;
     } // reveal in golden layout
-    D.elw && D.elw.focus();
-    window.focused || window.focus();
+    // Don't focus global window in multi-window setup
+    // D.elw && D.elw.focus();
+    // window.focused || window.focus();
+    console.log('RIDE: Se.focus() - calling me.focus(), hasTextFocus:', this.me.hasTextFocus());
     this.me.focus();
+    console.log('RIDE: Se.focus() - after me.focus(), hasTextFocus:', this.me.hasTextFocus());
     this.ide.setCursorPosition(this.me.getPosition(), this.me.getModel().getLineCount());
   },
   insert(ch) {
@@ -687,8 +691,16 @@ D.Se.prototype = {
   },
   autocompletionDelay(x) { this.me.updateOptions({ quickSuggestionsDelay: x }); },
   execCommand(cmd) {
-    if (this[cmd]) this[cmd](this.me);
-    else if (D.commands[cmd]) D.commands[cmd](this.me);
+    console.log('RIDE: Se.execCommand called with:', cmd);
+    if (this[cmd]) {
+      console.log('RIDE: Calling Se.' + cmd);
+      this[cmd](this.me);
+    } else if (D.commands[cmd]) {
+      console.log('RIDE: Calling D.commands.' + cmd);
+      D.commands[cmd](this.me);
+    } else {
+      console.error('RIDE: Command not found:', cmd);
+    }
   },
   zoom(z) {
     const se = this;
@@ -783,7 +795,10 @@ D.Se.prototype = {
   CLS() {},
   EMI() { if (this.promptType === 3) D.send('ExitMultilineInput', {}); },
   EP() { this.ide.focusMRUWin(); },
-  ER() { this.exec(0); },
+  ER() { 
+    console.log('RIDE: Se.ER() called - Enter key pressed in session');
+    this.exec(0); 
+  },
   TC() { this.exec(1); },
   IT() { this.exec(2); },
   LN() { D.prf.lineNums.toggle(); },

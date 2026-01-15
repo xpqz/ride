@@ -24,38 +24,13 @@
     const ESC = { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' };
     const esc = s => s.replace(/[<>&'"]/g, x => ESC[x]);
 
-    const ipc = require('node-ipc').default;
     const el = require('@electron/remote');
     const bw = el.getCurrentWindow();
     const [width] = bw.getContentSize();
-    const qp = require('querystring').parse(window.location.search.slice(1));
     const iswin = /^win/i.test(process.platform);
-
-    ipc.config.id = 'dialog';
-    ipc.config.appspace = qp.appid;
-    ipc.config.retry = 1500;
-    ipc.config.silent = true;
-    let rm;
-    ipc.connectTo('ride_master', () => {
-      rm = ipc.of.ride_master;
-      rm.on('connect', () => {
-        window.onbeforeunload = (e) => {
-          e.returnValue = false;
-          rm.emit('dialogClose', [token, { index: task ? -1 : value }]);
-        };
-        rm.emit('dialogCreated');
-      });
-      rm.on('disconnect', () => {
-        ipc.log('disconnected from ride_master'.notice);
-        window.onbeforeunload = null;
-        window.close();
-      });
-      rm.on('show', (opts) => show(opts));
-      rm.on('setTheme', (theme) => {
-        document.getElementById('theme_dark').disabled = theme !== 'dark';
-        document.getElementById('theme_light').disabled = theme !== 'light';
-      });
-    });
+    
+    // Dialog window loaded - waiting for direct calls
+    console.log('Dialog window loaded - waiting for direct calls');
 
     const gd_content = document.getElementById('gd_content');
     const gd_btns = document.getElementById('gd_btns');
@@ -88,7 +63,8 @@
           const ret = (index, questionkey) => {
             [...gd_btns.getElementsByTagName('button')].forEach(x => x.onclick = null);
             gd_footer_btns.onclick = null;
-            rm.emit('dialogClose', [token, { index, questionkey }]);
+            // Close the window
+            window.close();
           };
           const clickCb = (e) => {
             let t = e.currentTarget == gd_footer_btns ? e.target : e.currentTarget;
@@ -108,7 +84,8 @@
         gd_btns.innerHTML = '<button>OK</button><button>Cancel</button>';
         const ret = (index) => {
           gd_btns.onclick = null;
-          rm.emit('dialogClose', [token, { index }]);
+          // Close the window
+          window.close();
         };
         gd_btns.onclick = (e) => {
           if (e.target.nodeName === 'BUTTON') {
